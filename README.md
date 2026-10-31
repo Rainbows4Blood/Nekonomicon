@@ -1,6 +1,6 @@
 # Nekonomicon
 
-A planned Tauri desktop app for crawling and cataloguing tabletop RPG books from storefronts and, eventually, wikis.
+A planned desktop app for crawling and cataloguing tabletop RPG books from storefronts and, eventually, wikis. The crawler and backend will be written in Go, with Wails providing the desktop application framework.
 
 ## Crawler dashboard design
 

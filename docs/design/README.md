@@ -1,6 +1,6 @@
 # Crawler dashboard design handoff
 
-These three interactive mockups record the visual direction for Nekonomicon's Tauri desktop app. They are design references, not application code or a functioning crawler.
+These three interactive mockups record the visual direction for Nekonomicon's planned Go and Wails desktop app. They are design references, not application code or a functioning crawler.
 
 ## Preview the screens
 
