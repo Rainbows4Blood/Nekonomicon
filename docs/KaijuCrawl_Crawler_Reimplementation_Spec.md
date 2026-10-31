@@ -6,27 +6,42 @@
 
 **Reading convention:** “Current behavior” describes the inspected code. “Lean implementation choice” is an architectural option, not a claim that the original makes that choice. A simplification that removes an observable feature is called out explicitly.
 
-> **Nekonomicon implementation update:** The storage requirements immediately below are authoritative for the new application. KaijuCrawl's SQLite database, local archive directory and OS-file-lock ownership are historical reference behavior; do not implement them as Nekonomicon's storage design. Sections 1–13 retain the original source observations and pseudocode for provenance. Apply the MongoDB/S3 substitutions below wherever those sections describe persistence, recovery, reprocessing or ownership. This change does not establish support for an existing KaijuCrawl database, or decide the still-open semantics of a full recrawl.
+> **Nekonomicon implementation update:** The requirements immediately below are authoritative for the new application. The numbered sections preserve KaijuCrawl's source behavior for reference, including its SQLite database, local source archives, OS-file-lock ownership, reprocessing and extracted-field contract. Do not implement those historical storage and output choices when they conflict with the MongoDB requirements below. In particular, Nekonomicon stores the complete product response in MongoDB, does not archive it to S3, and fails a product that does not fit in one MongoDB document. This does not establish compatibility with an existing KaijuCrawl database or decide the still-open semantics of a full recrawl.
 
 ## Nekonomicon storage requirements
 
 ### Storage responsibilities
 
-Nekonomicon uses **MongoDB for durable catalogue and crawler state** and **Amazon S3 for immutable source-response archives**. Both are mandatory, including for a local desktop installation. A custom S3-compatible endpoint may be configured; it must provide the conditional-write and read semantics this protocol needs. Do not silently fall back to SQLite or local files if either service is missing or unavailable.
+Store all crawled product data and crawler state in **MongoDB**. Store each accepted product's complete source JSON response in its MongoDB product document. Do not store a copy of product responses or other crawled product data in S3, a local archive, GridFS or another spillover store. Other product uses of S3 are not specified here.
+
+**MongoDB and S3 are still both mandatory configuration prerequisites** for starting or resuming a crawl, including in a local desktop installation. The existing S3 configuration gate remains even though the crawler does not use S3 for product responses. Do not silently fall back to SQLite or local files when MongoDB is unavailable.
 
 | Data | Authoritative location |
 | --- | --- |
-| Normalized product records, discovery sightings and provenance | MongoDB |
-| Crawl runs, sitemap/product jobs, attempt outcomes, retries and cooldowns | MongoDB |
-| Catalogue identity, writer ownership/generation, schema versions, archive references and pending save intents | MongoDB |
-| Validated, gzip-compressed source response bodies | S3 bucket and configured prefix |
+| Complete accepted product JSON responses and product capture metadata | MongoDB, in the product collection for the crawl target |
+| Discovery, runs, sitemap/product jobs, outcomes, retries and cooldowns | MongoDB |
+| Catalogue identity, writer ownership/generation and schema versions | MongoDB |
 | Connection settings | Local application configuration; secrets in the OS credential store or another protected secret provider |
 
-MongoDB documents have a 16 MiB BSON limit. The source permits a decoded response of up to 16 MiB and can preserve both the accepted raw object and its outer envelope. Do not truncate that data or silently reduce the response limit just to fit it into one document. Keep the original complete response in S3 and expose the raw metadata through its archive reference; split or spill oversized derived fields as needed while preserving their complete values and consumer access. Persist exact decimal text and source number precision as described in the historical metadata contract.
+Store crawled product records in **one MongoDB collection per crawl target**. DriveThruRPG, DMs Guild, Storytellers Vault and Ulisses ebooks each have their own product collection; future crawl targets get their own collections. Product identity remains scoped to its catalogue, target and normalized product ID. Do not automatically merge records across targets. Shared collections may hold operational state such as runs, jobs, ownership and discovery; their records remain target-scoped where relevant. Exact collection names are implementation choices.
 
-Store crawled product records in **one MongoDB collection per crawl target**. The initial targets—DriveThruRPG, DMs Guild, Storytellers Vault and Ulisses ebooks—therefore each have their own product collection; future crawl targets get their own collections as well. Product identity remains scoped to its catalogue, target and normalized product ID. Do not automatically merge records across target collections. Shared collections may hold operational state such as runs, jobs, ownership, discovery and save intents; their records remain target-scoped where relevant. Exact collection names and the product document schema are separate implementation decisions.
+Within each target's product collection, enforce a stable unique index on `(catalogue, normalized product ID)`. Also enforce stable unique indexes for product jobs, sitemap jobs `(run, target, URL)` and discovery sightings. Queue claims, retries and updates must be atomic and durable across restarts. Use a transaction-capable MongoDB deployment (a replica set or sharded cluster), including a local replica set if self-hosted. Use short multi-document transactions where jobs, products and ownership must commit together, with majority-acknowledged writes. See the [MongoDB transaction documentation](https://www.mongodb.com/docs/manual/core/transactions/).
 
-Within each target's product collection, enforce a stable unique index on `(catalogue, normalized product ID)`. Also enforce stable unique indexes for product jobs, sitemap jobs `(run, target, URL)`, discovery sightings and save intents. Queue claims, retries and updates must be atomic and durable across restarts. Use a transaction-capable MongoDB deployment (a replica set or sharded cluster), including a local replica set if self-hosted. Use short multi-document transactions where changes to jobs, products, intents and ownership must commit together, with majority-acknowledged writes. See the [MongoDB transaction documentation](https://www.mongodb.com/docs/manual/core/transactions/).
+### Product response and document-size boundary
+
+For each product that passes the existing target identity, response-classification and completeness checks, store the **entire accepted response**, including the outer response envelope, unknown fields and nested data, in a queryable BSON value inside a single product document. Include the minimal catalogue/target/product identity, observation timestamps, safe HTTP and parser metadata needed to operate and reprocess the crawl. A response whose top level is an array remains an array in that value. Do not require selection of a curated subset of the source fields in order to ingest it; the detailed extracted-field contract in the historical section is a reference, not a requirement to duplicate every derived field. Preserve the existing validation checks unless separately changed.
+
+Preserve the response's information and numeric values when converting JSON to BSON; never silently round numbers, drop unknown fields or pretend a lossy conversion succeeded. When a source number cannot be represented exactly as a BSON number, use a documented lossless representation, or fail the item with an actionable encoding reason. Storing the parsed response as BSON does not guarantee byte-for-byte preservation of JSON whitespace, key ordering or lexical number formatting; no separate byte-identical archive is required. If a valid response cannot be represented safely, record an explicit failure rather than silently changing its data.
+
+MongoDB's maximum BSON document size is **16 MiB**, including the complete response and all product-document fields. Check the size of the actual encoded product document, not only the HTTP body. A response accepted under the original 16 MiB HTTP limit can exceed MongoDB's limit after conversion or after adding metadata. If the document exceeds MongoDB's limit or MongoDB rejects it for document size:
+
+1. Do not insert a partial product, truncate fields, split the product across documents, compress it to bypass the limit, or send the payload to S3 or another storage location.
+2. Mark the product job **failed** for the current run with a distinct `mongodb_document_too_large` reason. Record the product identity, encoded document size and applicable limit when known; do not log the response body or secrets.
+3. Do not retry this deterministic failure in the same run. It remains eligible under the normal rules for retrying unsuccessful products in a later run. If a previous complete product exists, keep that product intact and record the failed attempt separately.
+
+If MongoDB is unavailable or the failure outcome cannot be stored, pause and recover the job rather than claiming that the failure was recorded. Follow the same rules if a reprocessed document grows beyond the limit: preserve the prior product and report the failed reprocess outcome. The oversized payload is intentionally not retained, so investigating it later requires fetching it again. See the [MongoDB document-size limit](https://www.mongodb.com/docs/manual/core/document/#document-size-limit).
+
+The existing HTTP response-size limit still applies before BSON conversion. A response rejected while downloading because it exceeds that limit is a response-size failure, rather than `mongodb_document_too_large`, because no MongoDB document was produced. It is likewise a failed product, with no saved payload or same-run retry.
 
 ### Configuration and crawl gate
 
@@ -35,54 +50,54 @@ Provide a **Storage** settings screen for:
 - **MongoDB:** connection string and database name. A connection string can include credentials; protect and redact it accordingly.
 - **S3:** bucket, region, optional object-key prefix and optional custom endpoint. Support the AWS default credential provider chain or explicitly entered access key and secret; a temporary session token is optional. Never place credentials in URLs, logs or diagnostic messages.
 
-Save non-secret settings persistently and secrets in the platform credential store or a protected provider. Do not put secrets into MongoDB records, S3 object keys, application logs, mockup preview URLs or exported diagnostics. Show whether each service is **configured**, **not configured**, or has an actionable error; a saved configuration is not a claim that a connection has succeeded. Offer a **Test connection** action for each service with clear success/failure feedback. Testing is optional before starting a crawl; never mistake a syntactically complete form or a successful ping for proof of all required permissions. Connection tests must not mutate product, job or archive data. A short-lived, uniquely named S3 test object may be written, read and cleaned up under a dedicated test prefix, with a clear error if cleanup fails.
+Save non-secret settings persistently and secrets in the platform credential store or a protected provider. Do not put secrets into product data, S3 object keys, application logs, mockup preview URLs or exported diagnostics. Show whether each service is **configured**, **not configured**, or has an actionable error; a saved configuration is not a claim that a connection has succeeded. Offer a **Test connection** action for each service with clear success/failure feedback. Testing is optional before starting a crawl; never mistake a syntactically complete form or a successful ping for proof of all required permissions. Connection tests must not mutate product or job data. If an S3 test uses a short-lived, uniquely named test object, it must contain no crawled data and must be cleaned up, with a clear error if cleanup fails.
 
-The **Start crawl** action stays disabled until a complete, syntactically valid MongoDB configuration and a complete, syntactically valid S3 configuration have both been saved, and at least one storefront is selected. Explain which service is missing and link directly to Storage settings. Apply the same rule to regular and full crawls. The backend must enforce it too, including for direct commands and resume; UI state alone is not an authorization or data-integrity boundary. At start/resume, resolve credentials, establish MongoDB connectivity and transaction support, and verify the configured S3 destination and required access. If preflight fails, report the affected service and start no storefront requests or crawl jobs. A prior test does not replace this preflight.
+The **Start crawl** action stays disabled until a complete, syntactically valid MongoDB configuration and a complete, syntactically valid S3 configuration have both been saved, and at least one storefront is selected. Explain which service is missing and link directly to Storage settings. Apply the same rule to regular and full crawls. The backend must enforce it too, including for direct commands and resume. At start/resume, resolve credentials, establish MongoDB connectivity and transaction support, and verify the configured S3 destination and required access. If preflight fails, report the affected service and start no storefront requests or crawl jobs. A prior test does not replace this preflight.
 
-If a service becomes unavailable during a run, stop admitting new work and pause safely; retain durable claims/intents for recovery rather than reporting products as successful. Report which service needs attention. Resume only after the configured services and ownership are restored and pending intents have been reconciled. Apply the same storage requirements to reprocessing archived responses, which reads MongoDB and S3 but makes no storefront requests.
+If a required service is found unavailable during a run, stop admitting new work and pause safely; retain durable job state for recovery rather than reporting products as successful. Report which service needs attention. Resume only after the configured services and ownership are restored and incomplete work has been reconciled. Reprocessing uses the saved MongoDB response and makes no storefront request; the same MongoDB and S3 configuration gate applies.
 
-A running operation uses a stable destination snapshot; do not switch its database, bucket, endpoint or prefix mid-run. Bind the catalogue to its archive namespace, store enough non-secret location information with archive references to identify it, and never silently reinterpret old references after a settings change. Changing destinations for existing data requires an explicit migration or a new catalogue; implementing migration is a separate requirement.
+A running operation uses a stable destination snapshot; do not switch its database, bucket, endpoint or prefix mid-run. Switching MongoDB databases must not silently claim to migrate an existing catalogue; explicit migration or a new catalogue is a separate requirement. No archive namespace or S3 reference is attached to product records.
 
-### Durable capture and recovery across MongoDB and S3
+### Durable MongoDB capture and recovery
 
-MongoDB and S3 do not share a transaction. Preserve the original completeness, no-overwrite and recovery guarantees using an idempotent save-intent protocol:
+Persist each validated product and its successful job outcome atomically in MongoDB. Avoid holding database transactions open while contacting storefronts. A deterministic unique product key and fenced writes make retries and recovery idempotent.
 
 ```text
-function save_validated_capture(product, decoded_response):
-    require complete product and expected target/product identity
-    digest = SHA256(decoded_response)
-    key = prefix / catalogue_uuid / target / product_id / (digest + ".json.gz")
-    bytes = gzip(decoded_response)
-    transaction(fenced): insert or recover save intent; job.state = persistence
-    conditionally put object at key without replacing an existing object
-    if object already exists or the put outcome is uncertain:
-        read the existing object; never assume an ETag is the body hash
-    read object back; decompress and verify decoded length and SHA-256
+function save_validated_product(job, response):
+    require expected target/product identity and existing completeness checks
+    product_document = { catalogue, normalized_product_id,
+                         source_response: complete_json_as_bson(response),
+                         observation_times, safe_http, parser_version }
+    size = encoded_bson_size(product_document)
+    if size exceeds MongoDB document limit:
+        transaction(fenced): record job failed with mongodb_document_too_large
+        return
     transaction(fenced):
-        insert complete product if absent; record verified archive reference
-        finalize intent; mark job successful
+        save complete product according to the applicable crawl mode
+        mark job successful
 ```
 
-Use an S3 conditional create such as `If-None-Match: *`; handle an existing key or concurrent conflict by verifying the existing object or retrying safely. Do not classify a permission error or timeout as a missing object. Never overwrite a successful archive. Record the actual stored object's lengths, decoded hash and, if applicable, version ID. Do not hold a MongoDB transaction open during an S3 operation. Store only validated successful responses. S3 upload failures or failed verification must not produce a successful product.
+Treat a server-side document-too-large error identically to the precheck. If a failed insert has aborted a transaction, record the small failure outcome in a new fenced transaction. An indeterminate transaction result must be resolved using driver-supported retry/commit handling and the unique product key; it must not create duplicate successful products. On restart or ownership takeover, reconcile unfinished jobs from MongoDB and requeue work that did not commit. There is no S3 upload, source-archive save intent or cross-service capture transaction.
 
-On restart or resume, scan unfinished intents in bounded batches. If the referenced object exists, read, decompress, hash and reparse it before a fenced finalization. If it is definitely absent, requeue the product; if it is corrupt, inaccessible or its state is uncertain, pause and report the storage problem. A crash after uploading but before committing MongoDB state can leave an orphan object; cleanup must be conservative and never delete an object referenced by a product or pending intent. Reprocessing reads and verifies the original S3 object, makes no storefront request and preserves the original observation times. See [S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
+Reprocessing reads the stored MongoDB response, preserves the original observation times and does not fetch the storefront. Failed or oversized new representations must leave a previously complete product intact. A crawl's regular-versus-full recrawl overwrite/versioning behavior remains a separate open decision; this change does not define it.
 
 ### Shared-catalogue ownership
 
-A local OS file lock cannot protect a remotely shared catalogue. Use a MongoDB-backed, per-catalogue renewable lease with an owner ID, expiry and monotonically increasing fencing generation, evaluated against server time. Lease acquisition and takeover must be atomic. Each authoritative mutation must be fenced by the current owner and generation in the same transaction; write/guard the same ownership document so takeover and a stale writer cannot both commit. If the lease cannot be renewed, stop new work and reject further writes until ownership is reacquired and recovery completes. Do not delete or reset the generation on expiry. Lease expiry permits recovery after process death; it is not instantaneous like the original OS lock. Conditional immutable S3 writes and intent recovery handle any upload completed after a lease loss.
+A local OS file lock cannot protect a remotely shared catalogue. Use a MongoDB-backed, per-catalogue renewable lease with an owner ID, expiry and monotonically increasing fencing generation, evaluated against server time. Lease acquisition and takeover must be atomic. Each authoritative mutation must be fenced by the current owner and generation in the same transaction; write/guard the same ownership document so takeover and a stale writer cannot both commit. If the lease cannot be renewed, stop new work and reject further writes until ownership is reacquired and recovery completes. Do not delete or reset the generation on expiry. Lease expiry permits recovery after process death; it is not instantaneous like the original OS lock.
 
 ### Storage acceptance scenarios
 
 1. With neither service saved, with only MongoDB, or with only S3, both regular and full crawl starts are blocked in the UI and backend. No crawl run or storefront request is created. Both configured plus a selected storefront enables the start control; a failed preflight still prevents the run.
-2. Configuration survives application restart, secret values are protected and redacted, and a failed connection test does not erase the previous saved configuration. AWS provider-chain credentials and explicit credentials are both supported.
-3. MongoDB/S3 interruption during discovery, upload or finalization stops new work. After service restoration and lease reacquisition, unfinished work is reconciled without lost products, duplicate jobs or a false successful state.
-4. Crash before/after intent creation, during/after S3 upload and before/after the MongoDB final commit. Recovery handles missing, existing, corrupt and uncertain object outcomes without overwriting a successful archive. A stale owner cannot finalize after takeover.
-5. A response near the accepted 16 MiB limit remains fully recoverable from S3 and the complete extracted metadata remains accessible despite MongoDB's document-size limit.
-6. Reprocessing uses the verified original archive and MongoDB only; it does not fetch the storefront or change original capture times. Switching a configured bucket or database never silently redirects existing archive references.
+2. Each target stores its complete accepted response in its own product collection. Unknown and nested response fields remain accessible. No crawled response is written to S3 or a local archive; credentials and failure bodies do not appear in records or logs.
+3. A complete product document just under the actual BSON limit is saved and marked successful. A product whose encoded document exceeds the limit, or for which MongoDB returns a size rejection, is marked failed with `mongodb_document_too_large`; no partial product or fallback copy is saved and no same-run retry is scheduled.
+4. A size failure with a pre-existing complete product preserves that product and records the failed attempt. A failure-outcome write interrupted by a MongoDB outage pauses and recovers instead of pretending it was recorded. A later run can retry the failed product.
+5. Inject interruption before, during and after the MongoDB transaction. Recovery produces either a complete product with a successful job or a recoverable unfinished/failed job, never a partial success or duplicate. A stale owner cannot commit after takeover.
+6. Reprocessing uses the stored MongoDB response, makes no storefront request and preserves original observation times. A failed reprocess, including an oversized result, leaves the previous complete product intact.
+7. Configuration survives application restart, secret values are protected and redacted, and a failed connection test does not erase the previous saved configuration. AWS provider-chain credentials and explicit credentials are both supported.
 
 ## Historical KaijuCrawl behavior and pseudocode
 
-The following numbered sections document the source implementation, not Nekonomicon's chosen storage backend. Their SQLite, local-filesystem, OS-lock and related recovery instructions are historical; use the MongoDB/S3 requirements above for Nekonomicon.
+The following numbered sections document the source implementation, not Nekonomicon's chosen product-document model or storage backend. Their SQLite, local-filesystem archives, OS-lock, source-archive recovery and complete extracted-field contract are historical; use the MongoDB requirements above for Nekonomicon.
 
 ## 1. What the crawler does
 

@@ -15,4 +15,4 @@ Open any of the HTML files directly in a modern browser. The mockups are self-co
 
 ## Crawler implementation reference
 
-- [Crawler specification](docs/KaijuCrawl_Crawler_Reimplementation_Spec.md) — Nekonomicon's MongoDB/S3 storage requirements followed by an as-implemented reference for the earlier Rust crawler. The reference documents DriveThruRPG and first-successful-capture behavior; Nekonomicon's design additionally calls for four storefronts and a full-recrawl option.
+- [Crawler specification](docs/KaijuCrawl_Crawler_Reimplementation_Spec.md) — Nekonomicon's MongoDB crawler storage and connection requirements followed by an as-implemented reference for the earlier Rust crawler. The reference documents DriveThruRPG and first-successful-capture behavior; Nekonomicon's design additionally calls for four storefronts and a full-recrawl option.
