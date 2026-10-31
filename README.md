@@ -1,22 +1,25 @@
 # Nekonomicon
 
-A planned desktop app for crawling and cataloguing tabletop RPG books from storefronts and, eventually, wikis. The crawler and backend will be written in Go, with Wails providing the desktop application framework.
+A small, fast local book crawler built with Go and Wails. **DriveThruRPG must work end to end before any other storefront is implemented.**
 
-## Crawler dashboard design
+This repository is a fresh design handoff, not an implemented application.
 
-The repository currently contains the visual design handoff and a reference to the earlier KaijuCrawl crawler. Application source is not included in this repository yet.
+- [Implementation specification](docs/SPEC.md): scope, storage, pipeline, recovery, authentication, and acceptance criteria.
+- [Interactive desktop mockup](docs/design/crawler.html): download/open this file in a browser; no server, dependencies, credentials, or network required. GitHub displays its source rather than running it.
+- [Design handoff](docs/design/README.md): screen behavior and implementation notes.
+- [Agent instructions](AGENTS.md): engineering constraints and validation expectations.
+- [Example product response](docs/fixtures/dtrpg-product-584455.json): user-supplied response retained in full.
 
-- [Crawler setup mockup](docs/design/crawler-setup.html) — storefront selection, per-store cookie setup, the full-recrawl toggle, and the storage prerequisite.
-- [Active crawl mockup](docs/design/crawler-active.html) — per-store queued and catalogued counts, issues, and activity.
-- [Storage settings mockup](docs/design/crawler-settings.html) — MongoDB and S3 connection settings and example configuration states.
-- [Design handoff](docs/design/README.md) — the agreed scope, interaction notes, and open decisions for implementation.
+## Decisions
 
-Open any of the HTML files directly in a modern browser. The mockups are self-contained, work offline, link to each other, and use example data only.
+Go/Wails desktop application; local SQLite; complete product response JSON; local cover files. Discover IDs from robots-declared sitemaps, fetch products in bounded parallel workers, save in batches through one writer, then download covers separately. Authentication behavior is ported from KaijuCrawl.
 
-## Crawler implementation specification and reference
+DMs Guild, Storytellers Vault, Ulisses eBooks, network databases, S3, classification, and catalog enrichment are deferred.
 
-- [Crawler specification](docs/KaijuCrawl_Crawler_Reimplementation_Spec.md) — the current Nekonomicon contract: capture complete product responses into MongoDB in bounded batches, then download product images to S3. Standalone MongoDB and replica sets are supported; multi-document transactions are not required.
-- [Historical Rust crawler reference](docs/reference/KaijuCrawl_Rust_Crawler_Reference.md) — the inspected KaijuCrawl behavior, parser rules and source links. Its durable queue, archive, transaction and recovery machinery is historical and must not override Nekonomicon's current specification.
+## First implementation milestone
 
-The crawler keeps its working queue and product buffer in memory, writes batches of up to 1,000 documents, and saves periodic recovery checkpoints. Abrupt termination can lose unflushed or uncheckpointed progress; later work may be repeated. **Catalogued** counts confirmed saved products, while buffered products remain **Queued**. Images run as a subsequent phase and have their own status without adding another progress-count column.
+Prove authenticated DTRPG sitemap discovery and API fetching into SQLite before wiring up the full UI. Measure fetch, decode, and commit time separately. Then add recovery, covers, and Wails integration. See the spec for the completion gate.
 
+## Repository reset
+
+The fresh-start commit replaces the previous repository contents without rewriting history. Its parent contains the previous design. Revert the reset commit to restore that tree.
