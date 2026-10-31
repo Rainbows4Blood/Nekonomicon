@@ -6,26 +6,27 @@
 
 **Reading convention:** “Current behavior” describes the inspected code. “Lean implementation choice” is an architectural option, not a claim that the original makes that choice. A simplification that removes an observable feature is called out explicitly.
 
-> **Nekonomicon implementation update:** The requirements immediately below are authoritative for the new application. The numbered sections preserve KaijuCrawl's source behavior for reference, including its SQLite database, local source archives, OS-file-lock ownership, reprocessing and extracted-field contract. Do not implement those historical storage and output choices when they conflict with the MongoDB requirements below. In particular, Nekonomicon stores the complete product response in MongoDB, does not archive it to S3, and fails a product that does not fit in one MongoDB document. This does not establish compatibility with an existing KaijuCrawl database or decide the still-open semantics of a full recrawl.
+> **Nekonomicon implementation update:** The requirements immediately below are authoritative for the new application. The numbered sections preserve KaijuCrawl's source behavior for reference, including its SQLite database, local source archives, OS-file-lock ownership, reprocessing and extracted-field contract. Do not implement those historical storage and output choices when they conflict with the MongoDB requirements below. In particular, Nekonomicon stores the complete product response in MongoDB, downloads the primary product image to S3, does not archive JSON responses to S3, and fails a product document that does not fit in MongoDB. This does not establish compatibility with an existing KaijuCrawl database or decide the still-open semantics of a full recrawl.
 
 ## Nekonomicon storage requirements
 
 ### Storage responsibilities
 
-Store all crawled product data and crawler state in **MongoDB**. Store each accepted product's complete source JSON response in its MongoDB product document. Do not store a copy of product responses or other crawled product data in S3, a local archive, GridFS or another spillover store. Other product uses of S3 are not specified here.
+Store each accepted product's complete source JSON response and crawler state in **MongoDB**. Download that product's primary cover image and store its image bytes in **S3**, with an S3 reference and image status in MongoDB. Do not store the JSON response in S3, a local archive, GridFS or another spillover store. This requirement covers one primary product image per product; additional gallery images, previews and downloadable files are not included unless separately requested.
 
-**MongoDB and S3 are still both mandatory configuration prerequisites** for starting or resuming a crawl, including in a local desktop installation. The existing S3 configuration gate remains even though the crawler does not use S3 for product responses. Do not silently fall back to SQLite or local files when MongoDB is unavailable.
+**MongoDB and S3 are both mandatory configuration prerequisites** for starting or resuming a crawl, including in a local desktop installation. MongoDB holds product responses and S3 holds product cover images. Do not silently fall back to SQLite or local files when MongoDB is unavailable, or to local image storage when S3 is unavailable.
 
 | Data | Authoritative location |
 | --- | --- |
-| Complete accepted product JSON responses and product capture metadata | MongoDB, in the product collection for the crawl target |
-| Discovery, runs, sitemap/product jobs, outcomes, retries and cooldowns | MongoDB |
+| Complete accepted product JSON responses, image references and product capture metadata | MongoDB, in the product collection for the crawl target |
+| Primary product cover image bytes | S3, in the configured bucket and prefix |
+| Discovery, runs, sitemap/product/image jobs, outcomes, retries and cooldowns | MongoDB |
 | Catalogue identity, writer ownership/generation and schema versions | MongoDB |
 | Connection settings | Local application configuration; secrets in the OS credential store or another protected secret provider |
 
-Store crawled product records in **one MongoDB collection per crawl target**. DriveThruRPG, DMs Guild, Storytellers Vault and Ulisses ebooks each have their own product collection; future crawl targets get their own collections. Product identity remains scoped to its catalogue, target and normalized product ID. Do not automatically merge records across targets. Shared collections may hold operational state such as runs, jobs, ownership and discovery; their records remain target-scoped where relevant. Exact collection names are implementation choices.
+Store crawled product records in **one MongoDB collection per crawl target**. DriveThruRPG, DMs Guild, Storytellers Vault and Ulisses ebooks each have their own product collection; future crawl targets get their own collections. Product identity remains scoped to its catalogue, target and normalized product ID. Do not automatically merge records across targets. Shared collections may hold operational state such as runs, product/image jobs, ownership and discovery; their records remain target-scoped where relevant. Exact collection names are implementation choices.
 
-Within each target's product collection, enforce a stable unique index on `(catalogue, normalized product ID)`. Also enforce stable unique indexes for product jobs, sitemap jobs `(run, target, URL)` and discovery sightings. Queue claims, retries and updates must be atomic and durable across restarts. Use a transaction-capable MongoDB deployment (a replica set or sharded cluster), including a local replica set if self-hosted. Use short multi-document transactions where jobs, products and ownership must commit together, with majority-acknowledged writes. See the [MongoDB transaction documentation](https://www.mongodb.com/docs/manual/core/transactions/).
+Within each target's product collection, enforce a stable unique index on `(catalogue, normalized product ID)`. Also enforce stable unique indexes for product jobs, image jobs by product and source revision, sitemap jobs `(run, target, URL)` and discovery sightings. Queue claims, retries and updates must be atomic and durable across restarts. Use a transaction-capable MongoDB deployment (a replica set or sharded cluster), including a local replica set if self-hosted. Use short multi-document transactions where jobs, products and ownership must commit together, with majority-acknowledged writes. See the [MongoDB transaction documentation](https://www.mongodb.com/docs/manual/core/transactions/).
 
 ### Product response and document-size boundary
 
@@ -52,11 +53,11 @@ Provide a **Storage** settings screen for:
 
 Save non-secret settings persistently and secrets in the platform credential store or a protected provider. Do not put secrets into product data, S3 object keys, application logs, mockup preview URLs or exported diagnostics. Show whether each service is **configured**, **not configured**, or has an actionable error; a saved configuration is not a claim that a connection has succeeded. Offer a **Test connection** action for each service with clear success/failure feedback. Testing is optional before starting a crawl; never mistake a syntactically complete form or a successful ping for proof of all required permissions. Connection tests must not mutate product or job data. If an S3 test uses a short-lived, uniquely named test object, it must contain no crawled data and must be cleaned up, with a clear error if cleanup fails.
 
-The **Start crawl** action stays disabled until a complete, syntactically valid MongoDB configuration and a complete, syntactically valid S3 configuration have both been saved, and at least one storefront is selected. Explain which service is missing and link directly to Storage settings. Apply the same rule to regular and full crawls. The backend must enforce it too, including for direct commands and resume. At start/resume, resolve credentials, establish MongoDB connectivity and transaction support, and verify the configured S3 destination and required access. If preflight fails, report the affected service and start no storefront requests or crawl jobs. A prior test does not replace this preflight.
+The **Start crawl** action stays disabled until a complete, syntactically valid MongoDB configuration and a complete, syntactically valid S3 configuration have both been saved, and at least one storefront is selected. Explain which service is missing and link directly to Storage settings. Apply the same rule to regular and full crawls. The backend must enforce it too, including for direct commands and resume. At start/resume, resolve credentials, establish MongoDB connectivity and transaction support, and verify the configured S3 destination and the access required to write and read product images. If preflight fails, report the affected service and start no storefront requests or crawl jobs. A prior test does not replace this preflight.
 
 If a required service is found unavailable during a run, stop admitting new work and pause safely; retain durable job state for recovery rather than reporting products as successful. Report which service needs attention. Resume only after the configured services and ownership are restored and incomplete work has been reconciled. Reprocessing uses the saved MongoDB response and makes no storefront request; the same MongoDB and S3 configuration gate applies.
 
-A running operation uses a stable destination snapshot; do not switch its database, bucket, endpoint or prefix mid-run. Switching MongoDB databases must not silently claim to migrate an existing catalogue; explicit migration or a new catalogue is a separate requirement. No archive namespace or S3 reference is attached to product records.
+A running operation uses a stable destination snapshot; do not switch its database, bucket, endpoint or prefix mid-run. Store enough non-secret location information with each image reference to identify its bucket, object key and endpoint/namespace. Never silently reinterpret existing image references after a settings change. Moving an existing catalogue or its images to a different destination requires explicit migration or a new catalogue; a migration workflow is a separate requirement.
 
 ### Durable MongoDB capture and recovery
 
@@ -65,9 +66,11 @@ Persist each validated product and its successful job outcome atomically in Mong
 ```text
 function save_validated_product(job, response):
     require expected target/product identity and existing completeness checks
+    image_candidate = target_primary_image(response)
     product_document = { catalogue, normalized_product_id,
                          source_response: complete_json_as_bson(response),
-                         observation_times, safe_http, parser_version }
+                         observation_times, safe_http, parser_version,
+                         image_status: pending if image_candidate else not_available }
     size = encoded_bson_size(product_document)
     if size exceeds MongoDB document limit:
         transaction(fenced): record job failed with mongodb_document_too_large
@@ -75,11 +78,32 @@ function save_validated_product(job, response):
     transaction(fenced):
         save complete product according to the applicable crawl mode
         mark job successful
+        enqueue primary-image work for the saved product when a URL exists
 ```
 
-Treat a server-side document-too-large error identically to the precheck. If a failed insert has aborted a transaction, record the small failure outcome in a new fenced transaction. An indeterminate transaction result must be resolved using driver-supported retry/commit handling and the unique product key; it must not create duplicate successful products. On restart or ownership takeover, reconcile unfinished jobs from MongoDB and requeue work that did not commit. There is no S3 upload, source-archive save intent or cross-service capture transaction.
+Treat a server-side document-too-large error identically to the precheck. If a failed insert has aborted a transaction, record the small failure outcome in a new fenced transaction. An indeterminate transaction result must be resolved using driver-supported retry/commit handling and the unique product key; it must not create duplicate successful products. On restart or ownership takeover, reconcile unfinished jobs from MongoDB and requeue work that did not commit. There is no S3 upload or source-archive save intent for the JSON response. Primary-image work uses the separate MongoDB/S3 protocol below.
 
 Reprocessing reads the stored MongoDB response, preserves the original observation times and does not fetch the storefront. Failed or oversized new representations must leave a previously complete product intact. A crawl's regular-versus-full recrawl overwrite/versioning behavior remains a separate open decision; this change does not define it.
+
+### Product cover images in S3
+
+For every successfully saved product, find its primary product/cover image URL from the target's response and schedule it for download. The DriveThruRPG reference chooses `webImage` first and then `image`, resolving relative paths against `https://d1vzi28wh99zvq.cloudfront.net/`; see the [source cover selection](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/parser/extract.rs#L569). Each additional target adapter must define and verify its own primary-image selection and URL rules; do not assume that sharing a platform proves an identical API or media host. Retain all other image, preview and product-file references in the MongoDB source response, but do not download them as part of this requirement.
+
+Fetch and store the primary image's original image bytes without requiring resizing or conversion. Use a bounded download size, timeout and concurrency; validate status and image content so an HTML challenge or error page is never saved as the cover. Support at least common JPEG, PNG and WebP product images, and record an actionable failure for unsupported or invalid content. Image requests and every redirect must use an approved public HTTP(S) image origin without embedded credentials; prevent access to unsafe local/private endpoints and do not forward storefront cookies or credentials to unrelated origins. Establish and obey the relevant robots policy, per-origin pacing and target cooldown for origins the crawler requests. Each target adapter must explicitly account for its image/CDN hosts; the original website/API-only request allowlist is insufficient for this new image download.
+
+Store each product image in the configured S3 bucket and prefix using a safe target/product-scoped, content-addressed key such as `prefix/catalogue/target/product_id/cover/sha256`. The SHA-256 identifies the downloaded image bytes. Keep the key within S3's object-key limit and reject an unusable prefix rather than silently truncating it. Use a conditional create such as `If-None-Match: *` and verify the stored bytes, size and hash using a supported checksum or a readback; do not assume the S3 ETag is a content hash. If the key already exists or an upload result is uncertain, verify the existing object before reusing it. A missing object, permission error and temporary S3 failure must not be conflated. See [S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
+
+Keep the image's state and non-secret reference with the product in its target collection: bucket, endpoint/namespace where needed, object key, optional object version, SHA-256, byte size, detected media type and observation time. Image-job state, attempts, source/product revision, bounded errors and pending-upload intent may use the shared MongoDB operational collections. Do not store permanent credentials or temporary signed access URLs. Support reading private objects through configured S3 credentials or temporary authorized access; do not require a public bucket.
+
+MongoDB and S3 do not share a transaction. Save the product JSON and enqueue its image job atomically in MongoDB. After downloading an image, persist a small image-upload intent containing the product identity/revision, destination, object key, checksum, size, detected media type and original image observation time, then conditionally write and verify the S3 object. Finally, in a fenced MongoDB transaction, confirm the product and image job still refer to the same source revision, save the S3 image reference, and mark the image job stored. Never mark an image stored before the object is verified and its reference committed. Do not hold a MongoDB transaction open during the image download or S3 upload.
+
+On restart or resume, reconcile unfinished image jobs and intents. If the intended S3 object exists and verifies, finish the MongoDB update; if it is definitely absent, requeue the image download; if the object state is inaccessible, corrupt or uncertain, pause or report a storage error. A crash or a stale product revision can leave an unreferenced S3 object; never delete an object that a product or pending intent may still reference. Image retries must not duplicate a product or overwrite an unrelated object. If writing image metadata would make a product document exceed MongoDB's size limit, retain the previously saved product, mark the image job failed with an explicit size reason in the operational job record, and do not claim the image is stored.
+
+Image outcome is tracked separately from product JSON: **pending**, **stored**, **not available** when no primary image is provided, or **failed** with an actionable issue when image download or validation fails. A missing or failed cover does not discard an otherwise valid product or count it as an oversized product failure. Retry transient image requests with bounded per-run attempts/backoff; retry unsuccessful image jobs on a later run even if the product JSON was already successfully catalogued. If S3 itself is unavailable or cannot safely store/read images, pause new work and report the storage problem. The dashboard's **Catalogued** count represents saved product records; image issues are included in **Issues** so a saved product is not mistaken for having a stored image.
+
+The scheduler must include image jobs when determining whether a crawl is still active. A normal run finishes only after its image jobs have reached stored, not-available or failed outcomes, or the run is stopped; pending or scheduled-for-retry images are still work. The existing **Queued** column continues to count discovered products waiting to be catalogued, not image jobs. Image activity and failures appear in the activity feed and issues; no additional progress column is required.
+
+Reprocessing saved MongoDB responses does not itself download images or contact storefronts. If reprocessing discovers or changes the primary image URL, schedule the corresponding image work for a later crawl. The exact image-replacement behavior of a full recrawl remains open, but it must never overwrite an existing referenced S3 object silently.
 
 ### Shared-catalogue ownership
 
@@ -88,16 +112,20 @@ A local OS file lock cannot protect a remotely shared catalogue. Use a MongoDB-b
 ### Storage acceptance scenarios
 
 1. With neither service saved, with only MongoDB, or with only S3, both regular and full crawl starts are blocked in the UI and backend. No crawl run or storefront request is created. Both configured plus a selected storefront enables the start control; a failed preflight still prevents the run.
-2. Each target stores its complete accepted response in its own product collection. Unknown and nested response fields remain accessible. No crawled response is written to S3 or a local archive; credentials and failure bodies do not appear in records or logs.
+2. Each target stores its complete accepted response in its own product collection. Unknown and nested response fields remain accessible. No crawled JSON response is written to S3 or a local archive; credentials and failure bodies do not appear in records or logs.
 3. A complete product document just under the actual BSON limit is saved and marked successful. A product whose encoded document exceeds the limit, or for which MongoDB returns a size rejection, is marked failed with `mongodb_document_too_large`; no partial product or fallback copy is saved and no same-run retry is scheduled.
 4. A size failure with a pre-existing complete product preserves that product and records the failed attempt. A failure-outcome write interrupted by a MongoDB outage pauses and recovers instead of pretending it was recorded. A later run can retry the failed product.
 5. Inject interruption before, during and after the MongoDB transaction. Recovery produces either a complete product with a successful job or a recoverable unfinished/failed job, never a partial success or duplicate. A stale owner cannot commit after takeover.
 6. Reprocessing uses the stored MongoDB response, makes no storefront request and preserves original observation times. A failed reprocess, including an oversized result, leaves the previous complete product intact.
 7. Configuration survives application restart, secret values are protected and redacted, and a failed connection test does not erase the previous saved configuration. AWS provider-chain credentials and explicit credentials are both supported.
+8. A valid product with a primary image stores its complete JSON only in its target's MongoDB collection, uploads the original image bytes to S3 and saves a verified reference. Missing image URLs are reported as not available; invalid images and failed downloads create image issues without losing the product.
+9. A product rejected as too large for MongoDB does not upload an image or save a partial product. An image-reference update that would exceed the BSON limit preserves the previous product and reports the image failure through the job record.
+10. Crash before, during and after S3 image upload and before/after the reference commit. Recovery either verifies and links the image or retries it without falsely reporting success, duplicate products or overwriting another image. An inaccessible or corrupt object is not silently treated as absent.
+11. A failed image job is eligible for retry in a later crawl even when its product JSON was already catalogued. Pending and retrying image jobs keep the run active, even if the product queue is empty. S3 outage pauses the crawl and resumes safely after access returns. No cookie is sent to an unrelated image host; no HTML challenge is saved as an image.
 
 ## Historical KaijuCrawl behavior and pseudocode
 
-The following numbered sections document the source implementation, not Nekonomicon's chosen product-document model or storage backend. Their SQLite, local-filesystem archives, OS-lock, source-archive recovery and complete extracted-field contract are historical; use the MongoDB requirements above for Nekonomicon.
+The following numbered sections document the source implementation, not Nekonomicon's chosen product-document model or storage backend. Their SQLite, local-filesystem archives, OS-lock, source-archive recovery and complete extracted-field contract are historical. The original crawler only referenced product images; Nekonomicon must also download the primary image to S3 as described above.
 
 ## 1. What the crawler does
 

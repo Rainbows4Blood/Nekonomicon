@@ -185,8 +185,8 @@
             <div class="source-head" aria-hidden="true"><span>Storefront</span><span>Status</span><span>Queued</span><span>Catalogued</span></div>
             <div class="source-row"><div class="source-ident"><span class="emblem">DR</span><span class="source-name">DriveThruRPG</span></div><div class="source-state complete">Completed</div><div class="source-number"><span class="small-label">Queued</span>0</div><div class="source-number"><span class="small-label">Catalogued</span>3,205</div></div>
             <div class="source-row is-active"><div class="source-ident"><span class="emblem warm">DM</span><span class="source-name">DMs Guild</span></div><div class="source-state active-state" id="source-state">Crawling</div><div class="source-number"><span class="small-label">Queued</span>21</div><div class="source-number"><span class="small-label">Catalogued</span>819</div></div>
-            <div class="active-detail"><span id="source-detail">Fetching product pages · 2 issues</span><button class="link-button issue-toggle" type="button" aria-controls="issue-panel" aria-expanded="false">View issues</button></div>
-            <div id="issue-panel" class="issue-panel" hidden><strong>2 products couldn’t be catalogued</strong><div><span>Example product 10482</span><span>Request timed out</span></div><div><span>Example product 20491</span><span>MongoDB document exceeds 16 MiB</span></div></div>
+            <div class="active-detail"><span id="source-detail">Fetching product details · 2 issues</span><button class="link-button issue-toggle" type="button" aria-controls="issue-panel" aria-expanded="false">View issues</button></div>
+            <div id="issue-panel" class="issue-panel" hidden><strong>2 products need attention</strong><div><span>Example product 10482</span><span>Product image could not be downloaded</span></div><div><span>Example product 20491</span><span>MongoDB document exceeds 16 MiB</span></div></div>
             <div class="source-row"><div class="source-ident"><span class="emblem">SV</span><span class="source-name">Storytellers Vault</span></div><div class="source-state" data-queued>Waiting</div><div class="source-number empty-number"><span class="small-label">Queued</span>—</div><div class="source-number empty-number"><span class="small-label">Catalogued</span>—</div></div>
             <div class="source-row"><div class="source-ident"><span class="emblem warm">UE</span><span class="source-name">Ulisses ebooks</span></div><div class="source-state" data-queued>Waiting</div><div class="source-number empty-number"><span class="small-label">Queued</span>—</div><div class="source-number empty-number"><span class="small-label">Catalogued</span>—</div></div>
           </div>
@@ -194,8 +194,8 @@
         <section aria-labelledby="recent-activity">
           <div class="section-heading"><h2 id="recent-activity">Latest activity</h2><button class="link-button" type="button" id="show-more" aria-expanded="false">Show more</button></div>
           <div class="activity-list">
-            <div class="activity-row"><span class="activity-time">14:35:10</span><span class="activity-store">DMs Guild</span><span class="activity-message event-error">2 products couldn’t be catalogued</span><button class="link-button issue-toggle" type="button" aria-controls="issue-panel" aria-expanded="false">View issues</button></div>
-            <div class="activity-row"><span class="activity-time">14:34:55</span><span class="activity-store">DMs Guild</span><span class="activity-message">Saved product details to catalog</span></div>
+            <div class="activity-row"><span class="activity-time">14:35:10</span><span class="activity-store">DMs Guild</span><span class="activity-message event-error">2 products need attention</span><button class="link-button issue-toggle" type="button" aria-controls="issue-panel" aria-expanded="false">View issues</button></div>
+            <div class="activity-row"><span class="activity-time">14:34:55</span><span class="activity-store">DMs Guild</span><span class="activity-message">Stored product image</span></div>
             <div class="activity-row"><span class="activity-time">14:33:01</span><span class="activity-store">DriveThruRPG</span><span class="activity-message">Storefront crawl completed</span></div>
             <div class="activity-row extra-activity" hidden><span class="activity-time">14:32:44</span><span class="activity-store">DriveThruRPG</span><span class="activity-message">Finished checking listing pages</span></div>
             <div class="activity-row extra-activity" hidden><span class="activity-time">14:22:32</span><span class="activity-store">Crawler</span><span class="activity-message">Crawl started</span></div>
@@ -239,7 +239,7 @@
         sourceState.textContent = running ? 'Crawling' : paused ? 'Paused' : 'Stopped';
         sourceState.classList.toggle('active-state', running);
         sourceState.classList.toggle('paused-state', paused);
-        sourceDetail.textContent = running ? 'Fetching product pages · 2 issues' : paused ? 'Paused while fetching product pages · 2 issues' : 'Stopped while fetching product pages · 2 issues';
+        sourceDetail.textContent = running ? 'Fetching product details · 2 issues' : paused ? 'Paused while fetching product details · 2 issues' : 'Stopped while fetching product details · 2 issues';
         progressSummary.textContent = running ? '1 completed · 1 active · 2 waiting' : paused ? '1 completed · 1 paused · 2 waiting' : '1 completed · 1 stopped · 2 not started';
         root.querySelectorAll('[data-queued]').forEach(item => { item.textContent = state === 'stopped' ? 'Not started' : 'Waiting'; });
       }

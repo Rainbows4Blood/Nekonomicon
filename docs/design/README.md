@@ -30,7 +30,7 @@ The links above the mockups switch between the three references. No build step, 
 ## Storage settings view
 
 - MongoDB takes a connection string and database name. Product responses and crawler state are stored here. The implementation requires a transaction-capable replica set or sharded cluster.
-- S3 takes a bucket, region, optional prefix and optional custom S3-compatible endpoint. Credentials come from the AWS default provider chain or explicitly entered access key and secret, with an optional session token. S3 remains a required connection, but the crawler does not store product responses there.
+- S3 takes a bucket, region, optional prefix and optional custom S3-compatible endpoint. Credentials come from the AWS default provider chain or explicitly entered access key and secret, with an optional session token. The crawler stores each product’s primary cover image in S3; the product JSON remains in MongoDB.
 - The services can be saved and tested independently. Testing is optional before the user presses **Start crawl**; the real backend performs its own preflight at start or resume, reports service failures, and starts no crawl if it cannot use the configured storage.
 - Secret fields must be protected in the actual application. The mockup stores no field values, makes no network requests and passes only simulated readiness flags between screens.
 - If storage becomes unavailable during a run, the intended behavior is to pause safely and show an actionable error; the active-run example does not yet depict that error state.
@@ -41,7 +41,8 @@ The links above the mockups switch between the three references. No build step, 
 - The overview displays overall **Queued**, **Catalogued**, and **Issues** counts. The storefront table repeats queued and catalogued counts alongside each store's status.
 - In this draft, **Queued** means discovered listings waiting to be catalogued, and failed items are shown separately under **Issues**. A dash for a storefront that has not started avoids implying its total is known. Confirm the precise treatment of in-progress items, retries, duplicates, and per-run versus lifetime counts during implementation.
 - An active storefront shows its current task and a link to issue details. A compact activity feed shows recent events; the example exposes more rows and error details on demand.
-- The issue-details example includes a product that exceeded MongoDB's document-size limit, making that failure visible without implying the product was catalogued.
+- The issue-details example includes an image-download issue and a product that exceeded MongoDB's document-size limit. A product can be catalogued while its image is unavailable; image failures are surfaced as issues.
+- **Queued** continues to count products awaiting cataloguing. A crawl remains active while image jobs are pending or retrying, with image work visible in activity rather than a new progress column.
 - The sample shows one store completed, one active, and two waiting so the states can be reviewed together. It does not prescribe sequential crawling or actual counts, timings, errors, or retry policy.
 
 ## Visual and interaction notes
