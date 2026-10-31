@@ -1,572 +1,351 @@
-# KaijuCrawl: crawler specification and pseudocode
+# Nekonomicon crawler specification
 
-**Source:** [`Rainbows4Blood/kaijucrawl`](https://github.com/Rainbows4Blood/kaijucrawl) at commit [`f2ced97ac62f24e32abd51fd10b88fb7bda344af`](https://github.com/Rainbows4Blood/kaijucrawl/commit/f2ced97ac62f24e32abd51fd10b88fb7bda344af), the `main` head inspected on 31 October 2026.
+**Status:** Authoritative requirements for the Go + Wails reimplementation, updated 31 October 2026.
 
-**Purpose:** Extract the behavior of the Rust crawler so another engineer or agent can build a lean reimplementation. This is an **as-implemented** specification, not a request to reproduce the Tauri UI, catalogue browsing, AI analysis, or the rest of the application. The source and its synthetic tests are the evidence; no live storefront crawl was performed for this document. Endpoint behavior can change independently of the repository.
+**Source behaviour:** The [KaijuCrawl Rust crawler reference](reference/KaijuCrawl_Rust_Crawler_Reference.md) preserves the inspected implementation at [f2ced97ac62f24e32abd51fd10b88fb7bda344af](https://github.com/Rainbows4Blood/kaijucrawl/commit/f2ced97ac62f24e32abd51fd10b88fb7bda344af). Only the target, HTTP, cookie and pure validation behaviours explicitly retained below apply to Nekonomicon. Its SQLite queue, local archives, transactions, per-job durability, ownership fencing and old batch sizes are historical.
 
-**Reading convention:** “Current behavior” describes the inspected code. “Lean implementation choice” is an architectural option, not a claim that the original makes that choice. A simplification that removes an observable feature is called out explicitly.
+**Scope:** Crawl and retain complete product responses for the selected storefronts, then download their primary cover images. This specification does not implement catalogue browsing, AI analysis or classification. The design handoff and mockups are in [docs/design](design/README.md).
 
-> **Nekonomicon implementation update:** The requirements immediately below are authoritative for the new application. The numbered sections preserve KaijuCrawl's source behavior for reference, including its SQLite database, local source archives, OS-file-lock ownership, reprocessing and extracted-field contract. Do not implement those historical storage and output choices when they conflict with the MongoDB requirements below. In particular, Nekonomicon stores the complete product response in MongoDB, downloads the primary product image to S3, does not archive JSON responses to S3, and fails a product document that does not fit in MongoDB. This does not establish compatibility with an existing KaijuCrawl database or decide the still-open semantics of a full recrawl.
+## 1. Operating contract
 
-## Nekonomicon storage requirements
+1. Store the complete accepted JSON response, including long HTML descriptions, in MongoDB, with one product collection per crawl target.
+2. Use ordinary single-document atomic writes and acknowledged bulk operations. **No explicit multi-document MongoDB transactions are required or used by the crawler.** Standalone MongoDB and replica-set deployments are supported, locally or remotely.
+3. Keep discovery, scheduling, deduplication, attempts and pending captures primarily in memory. Periodically save compact recovery checkpoints; a durable per-job ledger is not required.
+4. Accumulate validated products into batches of **up to 1,000 records**, with byte, memory and age bounds. A crash may discard unflushed captures and queue changes since the last usable checkpoint.
+5. Complete the document-capture phase before starting the image phase. Image work is derived from saved product documents, rather than atomically enqueued in a separate job collection.
+6. Keep downloaded image bytes in S3. Record image results independently with conditional updates to their product documents.
+7. Retry and rediscovery may repeat work. Stable product keys and revision-aware updates must preserve already saved data. Do not advertise exactly-once processing, a complete audit trail, lossless queue recovery or strict stale-owner exclusion.
 
-### Storage responsibilities
+This is deliberately a best-effort ingestion pipeline. Accepted loss concerns **volatile work and progress**, not permission to truncate records, discard acknowledged products, disable write acknowledgement or report buffered records as saved. A crash can interrupt a bulk operation after only some records have been stored.
 
-Store each accepted product's complete source JSON response and crawler state in **MongoDB**. Download that product's primary cover image and store its image bytes in **S3**, with an S3 reference and image status in MongoDB. Do not store the JSON response in S3, a local archive, GridFS or another spillover store. This requirement covers one primary product image per product; additional gallery images, previews and downloadable files are not included unless separately requested.
+## 2. Storage and deployment
 
-**MongoDB and S3 are both mandatory configuration prerequisites** for starting or resuming a crawl, including in a local desktop installation. MongoDB holds product responses and S3 holds product cover images. Do not silently fall back to SQLite or local files when MongoDB is unavailable, or to local image storage when S3 is unavailable.
-
-| Data | Authoritative location |
+| Data | Location and role |
 | --- | --- |
-| Complete accepted product JSON responses, image references and product capture metadata | MongoDB, in the product collection for the crawl target |
-| Primary product cover image bytes | S3, in the configured bucket and prefix |
-| Discovery, runs, sitemap/product/image jobs, outcomes, retries and cooldowns | MongoDB |
-| Catalogue identity, writer ownership/generation and schema versions | MongoDB |
-| Connection settings | Local application configuration; secrets in the OS credential store or another protected secret provider |
+| Complete accepted product response and capture metadata | MongoDB product collection for that target; authoritative saved data |
+| Primary image URL, state, capture revision and stored S3 reference | The same product document |
+| Primary cover-image bytes | Configured S3 bucket and prefix |
+| Discovery frontier, active work, retry scheduling, deduplication and unflushed captures | Memory during the run |
+| Run/phase summaries, compact queue snapshots, recent failures and known cooldowns | Small MongoDB records/checkpoint chunks; recovery aids, not an authoritative job ledger |
+| Catalogue identity and optional advisory active-run lease | Small MongoDB records; never updated for each product |
+| Connection settings | Local configuration; credentials in the OS credential store or another protected provider |
 
-Store crawled product records in **one MongoDB collection per crawl target**. DriveThruRPG, DMs Guild, Storytellers Vault and Ulisses ebooks each have their own product collection; future crawl targets get their own collections. Product identity remains scoped to its catalogue, target and normalized product ID. Do not automatically merge records across targets. Shared collections may hold operational state such as runs, product/image jobs, ownership and discovery; their records remain target-scoped where relevant. Exact collection names are implementation choices.
+Use one product collection each for DriveThruRPG, DMs Guild, Storytellers Vault and Ulisses ebooks; future targets get their own collections. A product key includes catalogue identity, target and normalized source product ID. Enforce uniqueness within the target collection, for example with a unique index on `(catalogue_id, product_id)` or an equivalent deterministic `_id`. Do not merge cross-storefront listings automatically.
 
-Within each target's product collection, enforce a stable unique index on `(catalogue, normalized product ID)`. Also enforce stable unique indexes for product jobs, image jobs by product and source revision, sitemap jobs `(run, target, URL)` and discovery sightings. Queue claims, retries and updates must be atomic and durable across restarts. Use a transaction-capable MongoDB deployment (a replica set or sharded cluster), including a local replica set if self-hosted. Use short multi-document transactions where jobs, products and ownership must commit together, with majority-acknowledged writes. See the [MongoDB transaction documentation](https://www.mongodb.com/docs/manual/core/transactions/).
+Retain the source response as queryable BSON. Do not spill JSON into S3, GridFS, local archives or another store, and do not duplicate the entire HTML field merely to create a second representation. Derived query fields are optional and should be limited to actual application needs.
 
-### Product response and document-size boundary
+Use a single long-lived MongoDB client and a bounded writer. Build required indexes at setup, not during product processing. Index identity and the actual image-selection/query predicates; do not index every arbitrary source field. Optional search indexes are a separate feature.
 
-For each product that passes the existing target identity, response-classification and completeness checks, store the **entire accepted response**, including the outer response envelope, unknown fields and nested data, in a queryable BSON value inside a single product document. Include the minimal catalogue/target/product identity, observation timestamps, safe HTTP and parser metadata needed to operate and reprocess the crawl. A response whose top level is an array remains an array in that value. Do not require selection of a curated subset of the source fields in order to ingest it; the detailed extracted-field contract in the historical section is a reference, not a requirement to duplicate every derived field. Preserve the existing validation checks unless separately changed.
+### Acknowledgement and durability
 
-Preserve the response's information and numeric values when converting JSON to BSON; never silently round numbers, drop unknown fields or pretend a lossy conversion succeeded. When a source number cannot be represented exactly as a BSON number, use a documented lossless representation, or fail the item with an actionable encoding reason. Storing the parsed response as BSON does not guarantee byte-for-byte preservation of JSON whitespace, key ordering or lexical number formatting; no separate byte-identical archive is required. If a valid response cannot be represented safely, record an explicit failure rather than silently changing its data.
+Keep writes acknowledged. The default product/image write policy is `w: 1, j: true` for a standalone deployment and `w: "majority", j: true` for a replica set. Use bounded operation timeouts. These are ordinary write concerns, not transactions; no replica set must be created solely for crawling.
 
-MongoDB's maximum BSON document size is **16 MiB**, including the complete response and all product-document fields. Check the size of the actual encoded product document, not only the HTTP body. A response accepted under the original 16 MiB HTTP limit can exceed MongoDB's limit after conversion or after adding metadata. If the document exceeds MongoDB's limit or MongoDB rejects it for document size:
+An acknowledgement timeout or lost connection can leave an **unknown** result even when some writes reached the server. Reconcile or safely repeat those operations. Do not equate a timeout with “nothing was written,” and do not count queue admission or request submission as persistence. Checkpoint loss has the weaker recovery semantics described below.
 
-1. Do not insert a partial product, truncate fields, split the product across documents, compress it to bypass the limit, or send the payload to S3 or another storage location.
-2. Mark the product job **failed** for the current run with a distinct `mongodb_document_too_large` reason. Record the product identity, encoded document size and applicable limit when known; do not log the response body or secrets.
-3. Do not retry this deterministic failure in the same run. It remains eligible under the normal rules for retrying unsuccessful products in a later run. If a previous complete product exists, keep that product intact and record the failed attempt separately.
+References: [single-document atomicity](https://www.mongodb.com/docs/manual/core/write-operations-atomicity/), [bulk operations](https://www.mongodb.com/docs/manual/core/bulk-write-operations/), [write concern](https://www.mongodb.com/docs/manual/reference/write-concern/).
 
-If MongoDB is unavailable or the failure outcome cannot be stored, pause and recover the job rather than claiming that the failure was recorded. Follow the same rules if a reprocessed document grows beyond the limit: preserve the prior product and report the failed reprocess outcome. The oversized payload is intentionally not retained, so investigating it later requires fetching it again. See the [MongoDB document-size limit](https://www.mongodb.com/docs/manual/core/document/#document-size-limit).
+## 3. Configuration and crawl gate
 
-The existing HTTP response-size limit still applies before BSON conversion. A response rejected while downloading because it exceeds that limit is a response-size failure, rather than `mongodb_document_too_large`, because no MongoDB document was produced. It is likewise a failed product, with no saved payload or same-run retry.
+MongoDB and S3 remain mandatory saved configuration prerequisites for Start and Resume. Keep the existing Storage screen:
 
-### Configuration and crawl gate
+- **MongoDB:** connection string and database name. Support standalone and replica-set deployments. Preflight must not require transactions or transaction-capable topology.
+- **S3:** bucket, region, optional object-key prefix and optional custom endpoint; AWS default credential provider chain or explicit access key/secret, with optional session token.
 
-Provide a **Storage** settings screen for:
+Protect and redact credentials, including credentials inside a MongoDB URI. Connection tests are optional diagnostics; a saved form or successful ping does not prove permissions. A test must not mutate product data. If the S3 test uses a temporary uniquely named object, use no crawled data and clean it up.
 
-- **MongoDB:** connection string and database name. A connection string can include credentials; protect and redact it accordingly.
-- **S3:** bucket, region, optional object-key prefix and optional custom endpoint. Support the AWS default credential provider chain or explicitly entered access key and secret; a temporary session token is optional. Never place credentials in URLs, logs or diagnostic messages.
+Enable Start only when both configurations are syntactically complete and at least one target is selected. The backend enforces the same gate. At start/resume, verify MongoDB connectivity and necessary read/write/index permissions, and verify access to the configured S3 destination. Report actionable failures before starting storefront requests. Do not silently fall back to SQLite, local product files or local image storage.
 
-Save non-secret settings persistently and secrets in the platform credential store or a protected provider. Do not put secrets into product data, S3 object keys, application logs, mockup preview URLs or exported diagnostics. Show whether each service is **configured**, **not configured**, or has an actionable error; a saved configuration is not a claim that a connection has succeeded. Offer a **Test connection** action for each service with clear success/failure feedback. Testing is optional before starting a crawl; never mistake a syntactically complete form or a successful ping for proof of all required permissions. Connection tests must not mutate product or job data. If an S3 test uses a short-lived, uniquely named test object, it must contain no crawled data and must be cleaned up, with a clear error if cleanup fails.
+Use a stable destination snapshot for the run. Do not switch database, bucket, endpoint or prefix in flight. Store sufficient non-secret destination information in each saved image reference; changing settings must not reinterpret old references. Moving existing data is an explicit migration, outside this change.
 
-The **Start crawl** action stays disabled until a complete, syntactically valid MongoDB configuration and a complete, syntactically valid S3 configuration have both been saved, and at least one storefront is selected. Explain which service is missing and link directly to Storage settings. Apply the same rule to regular and full crawls. The backend must enforce it too, including for direct commands and resume. At start/resume, resolve credentials, establish MongoDB connectivity and transaction support, and verify the configured S3 destination and the access required to write and read product images. If preflight fails, report the affected service and start no storefront requests or crawl jobs. A prior test does not replace this preflight.
+If MongoDB becomes unavailable, stop admitting work before bounded buffers overflow and pause persistence. If S3 becomes unavailable after preflight, already saved metadata remains valid; the image phase pauses with pending work recoverable from product documents. An S3 problem must not roll back metadata or force refetching it. Do not introduce S3 calls into the metadata write path.
 
-If a required service is found unavailable during a run, stop admitting new work and pause safely; retain durable job state for recovery rather than reporting products as successful. Report which service needs attention. Resume only after the configured services and ownership are restored and incomplete work has been reconciled. Reprocessing uses the saved MongoDB response and makes no storefront request; the same MongoDB and S3 configuration gate applies.
+## 4. Product document and failure boundary
 
-A running operation uses a stable destination snapshot; do not switch its database, bucket, endpoint or prefix mid-run. Store enough non-secret location information with each image reference to identify its bucket, object key and endpoint/namespace. Never silently reinterpret existing image references after a settings change. Moving an existing catalogue or its images to a different destination requires explicit migration or a new catalogue; a migration workflow is a separate requirement.
+### Accepted response
 
-### Durable MongoDB capture and recovery
+Retain the **entire accepted per-product JSON response**, including its outer envelope, unknown properties, nested data and original HTML. A top-level array stays an array in the source value. Parsing to BSON preserves information, not byte-identical whitespace or key order.
 
-Persist each validated product and its successful job outcome atomically in MongoDB. Avoid holding database transactions open while contacting storefronts. A deterministic unique product key and fenced writes make retries and recovery idempotent.
+Maintain exact numeric values. Use a documented lossless representation when BSON numeric types cannot represent a source number exactly, or fail explicitly; never silently round or drop fields. Existing target identity, response-classification and full-description completeness checks remain in force.
 
-```text
-function save_validated_product(job, response):
-    require expected target/product identity and existing completeness checks
-    image_candidate = target_primary_image(response)
-    product_document = { catalogue, normalized_product_id,
-                         source_response: complete_json_as_bson(response),
-                         observation_times, safe_http, parser_version,
-                         image_status: pending if image_candidate else not_available }
-    size = encoded_bson_size(product_document)
-    if size exceeds MongoDB document limit:
-        transaction(fenced): record job failed with mongodb_document_too_large
-        return
-    transaction(fenced):
-        save complete product according to the applicable crawl mode
-        mark job successful
-        enqueue primary-image work for the saved product when a URL exists
-```
+A minimal application envelope contains:
 
-Treat a server-side document-too-large error identically to the precheck. If a failed insert has aborted a transaction, record the small failure outcome in a new fenced transaction. An indeterminate transaction result must be resolved using driver-supported retry/commit handling and the unique product key; it must not create duplicate successful products. On restart or ownership takeover, reconcile unfinished jobs from MongoDB and requeue work that did not commit. There is no S3 upload or source-archive save intent for the JSON response. Primary-image work uses the separate MongoDB/S3 protocol below.
-
-Reprocessing reads the stored MongoDB response, preserves the original observation times and does not fetch the storefront. Failed or oversized new representations must leave a previously complete product intact. A crawl's regular-versus-full recrawl overwrite/versioning behavior remains a separate open decision; this change does not define it.
-
-### Product cover images in S3
-
-For every successfully saved product, find its primary product/cover image URL from the target's response and schedule it for download. The DriveThruRPG reference chooses `webImage` first and then `image`, resolving relative paths against `https://d1vzi28wh99zvq.cloudfront.net/`; see the [source cover selection](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/parser/extract.rs#L569). Each additional target adapter must define and verify its own primary-image selection and URL rules; do not assume that sharing a platform proves an identical API or media host. Retain all other image, preview and product-file references in the MongoDB source response, but do not download them as part of this requirement.
-
-Fetch and store the primary image's original image bytes without requiring resizing or conversion. Use a bounded download size, timeout and concurrency; validate status and image content so an HTML challenge or error page is never saved as the cover. Support at least common JPEG, PNG and WebP product images, and record an actionable failure for unsupported or invalid content. Image requests and every redirect must use an approved public HTTP(S) image origin without embedded credentials; prevent access to unsafe local/private endpoints and do not forward storefront cookies or credentials to unrelated origins. Establish and obey the relevant robots policy, per-origin pacing and target cooldown for origins the crawler requests. Each target adapter must explicitly account for its image/CDN hosts; the original website/API-only request allowlist is insufficient for this new image download.
-
-Store each product image in the configured S3 bucket and prefix using a safe target/product-scoped, content-addressed key such as `prefix/catalogue/target/product_id/cover/sha256`. The SHA-256 identifies the downloaded image bytes. Keep the key within S3's object-key limit and reject an unusable prefix rather than silently truncating it. Use a conditional create such as `If-None-Match: *` and verify the stored bytes, size and hash using a supported checksum or a readback; do not assume the S3 ETag is a content hash. If the key already exists or an upload result is uncertain, verify the existing object before reusing it. A missing object, permission error and temporary S3 failure must not be conflated. See [S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
-
-Keep the image's state and non-secret reference with the product in its target collection: bucket, endpoint/namespace where needed, object key, optional object version, SHA-256, byte size, detected media type and observation time. Image-job state, attempts, source/product revision, bounded errors and pending-upload intent may use the shared MongoDB operational collections. Do not store permanent credentials or temporary signed access URLs. Support reading private objects through configured S3 credentials or temporary authorized access; do not require a public bucket.
-
-MongoDB and S3 do not share a transaction. Save the product JSON and enqueue its image job atomically in MongoDB. After downloading an image, persist a small image-upload intent containing the product identity/revision, destination, object key, checksum, size, detected media type and original image observation time, then conditionally write and verify the S3 object. Finally, in a fenced MongoDB transaction, confirm the product and image job still refer to the same source revision, save the S3 image reference, and mark the image job stored. Never mark an image stored before the object is verified and its reference committed. Do not hold a MongoDB transaction open during the image download or S3 upload.
-
-On restart or resume, reconcile unfinished image jobs and intents. If the intended S3 object exists and verifies, finish the MongoDB update; if it is definitely absent, requeue the image download; if the object state is inaccessible, corrupt or uncertain, pause or report a storage error. A crash or a stale product revision can leave an unreferenced S3 object; never delete an object that a product or pending intent may still reference. Image retries must not duplicate a product or overwrite an unrelated object. If writing image metadata would make a product document exceed MongoDB's size limit, retain the previously saved product, mark the image job failed with an explicit size reason in the operational job record, and do not claim the image is stored.
-
-Image outcome is tracked separately from product JSON: **pending**, **stored**, **not available** when no primary image is provided, or **failed** with an actionable issue when image download or validation fails. A missing or failed cover does not discard an otherwise valid product or count it as an oversized product failure. Retry transient image requests with bounded per-run attempts/backoff; retry unsuccessful image jobs on a later run even if the product JSON was already successfully catalogued. If S3 itself is unavailable or cannot safely store/read images, pause new work and report the storage problem. The dashboard's **Catalogued** count represents saved product records; image issues are included in **Issues** so a saved product is not mistaken for having a stored image.
-
-The scheduler must include image jobs when determining whether a crawl is still active. A normal run finishes only after its image jobs have reached stored, not-available or failed outcomes, or the run is stopped; pending or scheduled-for-retry images are still work. The existing **Queued** column continues to count discovered products waiting to be catalogued, not image jobs. Image activity and failures appear in the activity feed and issues; no additional progress column is required.
-
-Reprocessing saved MongoDB responses does not itself download images or contact storefronts. If reprocessing discovers or changes the primary image URL, schedule the corresponding image work for a later crawl. The exact image-replacement behavior of a full recrawl remains open, but it must never overwrite an existing referenced S3 object silently.
-
-### Shared-catalogue ownership
-
-A local OS file lock cannot protect a remotely shared catalogue. Use a MongoDB-backed, per-catalogue renewable lease with an owner ID, expiry and monotonically increasing fencing generation, evaluated against server time. Lease acquisition and takeover must be atomic. Each authoritative mutation must be fenced by the current owner and generation in the same transaction; write/guard the same ownership document so takeover and a stale writer cannot both commit. If the lease cannot be renewed, stop new work and reject further writes until ownership is reacquired and recovery completes. Do not delete or reset the generation on expiry. Lease expiry permits recovery after process death; it is not instantaneous like the original OS lock.
-
-### Storage acceptance scenarios
-
-1. With neither service saved, with only MongoDB, or with only S3, both regular and full crawl starts are blocked in the UI and backend. No crawl run or storefront request is created. Both configured plus a selected storefront enables the start control; a failed preflight still prevents the run.
-2. Each target stores its complete accepted response in its own product collection. Unknown and nested response fields remain accessible. No crawled JSON response is written to S3 or a local archive; credentials and failure bodies do not appear in records or logs.
-3. A complete product document just under the actual BSON limit is saved and marked successful. A product whose encoded document exceeds the limit, or for which MongoDB returns a size rejection, is marked failed with `mongodb_document_too_large`; no partial product or fallback copy is saved and no same-run retry is scheduled.
-4. A size failure with a pre-existing complete product preserves that product and records the failed attempt. A failure-outcome write interrupted by a MongoDB outage pauses and recovers instead of pretending it was recorded. A later run can retry the failed product.
-5. Inject interruption before, during and after the MongoDB transaction. Recovery produces either a complete product with a successful job or a recoverable unfinished/failed job, never a partial success or duplicate. A stale owner cannot commit after takeover.
-6. Reprocessing uses the stored MongoDB response, makes no storefront request and preserves original observation times. A failed reprocess, including an oversized result, leaves the previous complete product intact.
-7. Configuration survives application restart, secret values are protected and redacted, and a failed connection test does not erase the previous saved configuration. AWS provider-chain credentials and explicit credentials are both supported.
-8. A valid product with a primary image stores its complete JSON only in its target's MongoDB collection, uploads the original image bytes to S3 and saves a verified reference. Missing image URLs are reported as not available; invalid images and failed downloads create image issues without losing the product.
-9. A product rejected as too large for MongoDB does not upload an image or save a partial product. An image-reference update that would exceed the BSON limit preserves the previous product and reports the image failure through the job record.
-10. Crash before, during and after S3 image upload and before/after the reference commit. Recovery either verifies and links the image or retries it without falsely reporting success, duplicate products or overwriting another image. An inaccessible or corrupt object is not silently treated as absent.
-11. A failed image job is eligible for retry in a later crawl even when its product JSON was already catalogued. Pending and retrying image jobs keep the run active, even if the product queue is empty. S3 outage pauses the crawl and resumes safely after access returns. No cookie is sent to an unrelated image host; no HTML challenge is saved as an image.
-
-## Historical KaijuCrawl behavior and pseudocode
-
-The following numbered sections document the source implementation, not Nekonomicon's chosen product-document model or storage backend. Their SQLite, local-filesystem archives, OS-lock, source-archive recovery and complete extracted-field contract are historical. The original crawler only referenced product images; Nekonomicon must also download the primary image to S3 as described above.
-
-## 1. What the crawler does
-
-1. Discover DriveThruRPG product URLs by following the root sitemap, nested sitemaps, and accepted sitemap declarations from robots policies.
-2. Convert each recognized URL to a normalized positive decimal product ID, scoped to the target `drivethru`.
-3. Retrieve product details from a fixed JSON API endpoint, subject to robots rules, target cooldowns, bounded concurrency and authenticated cookies when supplied.
-4. Verify that the response directly and unambiguously describes the requested ID. Require a nonempty title and a nonempty **full** description after HTML cleanup.
-5. Extract the metadata, archive the validated response body, and commit the product record and queue outcome durably.
-6. Retry transient errors within a finite per-run budget. On a later run, retry unsuccessful products and rescan sitemaps; never refetch an already successful product during ordinary crawling, even when a sitemap `lastmod` changes.
-7. Recover interrupted saves and support reprocessing archived successful responses after a parser-version change, without network requests or changing original observation times.
-
-This makes a catalogue of **first successful observations**, not an automatically refreshed mirror. A completed run may still have failed jobs or undiscovered products.
-
-**Target scope:** The inspected implementation has exactly one target: DriveThruRPG. DMsGuild, Storytellers Vault, Ulisses and other OneBookShelf storefronts are not implemented targets here. Do not infer their API parameters or support from the shared platform. Target-scoped identities and interfaces leave room for adapters later. See [target constants and URL rules](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/targets/drivethru.rs#L4).
-
-## 2. Essential target constants and identity
-
-| Item | Current value |
+| Field group | Contents |
 | --- | --- |
-| Target key | `drivethru` |
-| Website origin | `https://www.drivethrurpg.com/` |
-| API origin | `https://api.drivethrurpg.com/` |
-| Root sitemap | `https://www.drivethrurpg.com/sitemap.xml` |
-| Canonical product URL | `https://www.drivethrurpg.com/en/product/{id}` |
-| Product API | `https://api.drivethrurpg.com/api/vBeta/products/{id}?groupId=1&siteId=10` |
-| Relative image base | `https://d1vzi28wh99zvq.cloudfront.net/` |
-| Full-preview base | `https://watermark.drivethrurpg.com/` |
-| Currency fallback | `USD`, labeled as a frontend-base-currency assumption |
-| Request User-Agent | `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) Gecko/20100101 Firefox/158.0` |
-| Robots matching identity | `KaijuCrawl/{package_version}`; the matcher uses its product token |
+| Identity | Catalogue, target, normalized product ID, canonical/source API URL |
+| Source | Complete accepted response as a BSON value |
+| Capture | Capture revision, original observation time, safe HTTP metadata, parser/schema version, complete-capture indicator |
+| Image | Primary source URL, state, revision associated with that URL, and an optional verified S3 reference |
+| Optional derived metadata | Only fields needed for browsing, filtering or reprocessing |
 
-A product ID contains only ASCII decimal digits, must not represent zero, and is stored as a string with leading zeroes removed. Thus `00042` is `42`; `0`, `-2`, `2.1`, and `1e3` are invalid. Do not parse IDs into a fixed-width integer: the existing code accepts IDs larger than `u64`. The product key is `(target_key, normalized_product_id)`, not an ID alone.
+A capture revision is an application-generated identifier attached to a prepared capture and retained across retries. It need not be a sortable source revision or source timestamp. Image completions refer to that saved revision.
 
-For product discovery, accept HTTPS URLs on `drivethrurpg.com` or `www.drivethrurpg.com`, without credentials or a non-default port, in these forms:
+Save source data, capture metadata and the initial image state in **one document operation**. Use `pending` when a primary image exists and `not_available` when it does not. No separate image-job insert or product-job completion must commit atomically with it.
 
-- `/product/{id}` or `/product/{id}/...`;
-- `/{locale}/product/{id}` or `/{locale}/product/{id}/...`, where the locale is at most five ASCII letters or hyphens;
-- `/product_info.php?products_id={id}` when there is exactly one `products_id` parameter.
+### Record-size and validation failures
 
-Query strings and fragments on discovered product aliases do not become product identity. Preserve the original alias for provenance and queue the canonical URL. Other paths and foreign, HTTP, credential-bearing or disallowed-port URLs are ignored. Approved nested sitemap URLs must be HTTPS website URLs ending in `.xml`, `.xml.gz`, or `/sitemap`, case-insensitively; their fragments are removed.
+The complete encoded BSON document must fit MongoDB's **16 MiB per-document limit**, including the envelope and image metadata. Check the encoded document, not just the downloaded JSON. The existing 16 MiB HTTP limit still applies before conversion; an HTTP size rejection is a different error.
 
-**Important compatibility distinction:** Product response requests always use the API URL above. Product-page HTML is not a fallback source. The crawler does not enumerate IDs or discover products from listings, categories, recommendations or related-product links.
+If a response fails identity/completeness/encoding checks or exceeds the document limit:
 
-Sources: [target adapter](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/targets/drivethru.rs#L28), [ID implementation](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/domain.rs#L43), [URL and identity tests](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/tests/contracts.rs#L21).
+- Do not truncate, split, compress-to-bypass, or spill the product payload elsewhere.
+- Mark the item failed in the current in-memory run with a specific reason, including `mongodb_document_too_large` for the BSON limit.
+- Include only identity, observation time, error and measured sizes in the small failure buffer/checkpoint. Batch these diagnostic writes; no synchronous error ledger is required for every item.
+- Keep any previously saved complete product and image reference intact.
+- Do not retry a deterministic failure in the same uninterrupted run. It can be attempted again in a later run.
+- A crash before the next diagnostic checkpoint can lose that failure status. Rediscovery may try the item again; this is an accepted best-effort tradeoff.
 
-## 3. Inputs, outputs and state
+Failure-only records must not masquerade as complete products. Prefer a separate compact issues/checkpoint collection; if legacy failure stubs exist in a product collection, they never qualify for incremental-skip logic.
 
-### Inputs
+The oversized body is intentionally not retained. A MongoDB outage also prevents durable failure recording; report the local issue and pause as needed, without claiming it was saved. See [MongoDB document limits](https://www.mongodb.com/docs/manual/core/document/#document-size-limit).
 
-- An explicit **start crawl** or **reprocess saved responses** action. Starting the application alone does not start a crawl.
-- For a crawl, an optional cookie source: anonymous, separately pasted website/API Cookie headers, or an imported browser profile. The desktop shell also requires the target to be selected.
-- Local durable state, including prior products, jobs, run history, target cooldowns, pending save intents and archives.
-- Storefront robots files, sitemaps and product API responses.
+## 5. In-memory discovery and scheduling
 
-### Outputs
+Maintain compact queues/sets for sitemap URLs, product identities, active workers, retry due times and recent failures. Keep payloads in the bounded capture buffers, not in every queue entry. One uninterrupted run admits at most one active/buffered metadata task per product identity.
 
-- One durable, complete product per `(target, id)` and one immutable successful source archive for its capture.
-- Durable job states, attempt counts, failure reasons, discovery provenance and run summaries.
-- Progress such as queued/active/retrying/failed products, discovery state, successful products, active work and cooldown. Do not present a drained queue as proof of full storefront coverage.
-- A pause or failure with sanitized diagnostic information when authentication, policy, parsing or storage prevents progress.
+Discovery adds validated identities to memory. It does not insert a MongoDB job, claim, attempt record or discovery row for every item. Deduplicate aliases and sitemap cycles in memory. Preserve the original source URL/provenance as useful compact metadata, without requiring a durable per-sighting audit trail.
 
-### State model for a lean implementation
+For incremental crawling, load saved complete product identities in bounded projected/keyset pages, or test discovered identities in bounded indexed groups. Avoid one existence query per discovered ID. Never skip an item merely because an old queue checkpoint says “done”; saved complete product data determines whether capture is already available.
 
-The existing SQLite schema is more extensive, but these concepts are the minimum needed to reproduce the crawler behavior:
+Normal crawling retains the historical first-successful-capture behaviour: scan sitemaps on each fresh run, skip complete saved products, and retry unsuccessful products in later runs. A changed sitemap `lastmod` alone does not trigger a refresh. The full-recrawl overwrite/history policy remains an explicit open decision in section 14.
 
-| Entity | Key and relevant state |
-| --- | --- |
-| Catalogue | Stable catalogue UUID; one writer owner and monotonically increasing ownership generation. |
-| Run | UUID, `crawl` or `reprocess`, status, start/end times, runtime snapshot and summary/checkpoint. |
-| Target | Target key and persisted shared cooldown-until time. |
-| Job | Kind (`sitemap` or `product`), target, identity, URL, run, state, due time, attempts in this run, lifetime attempts, claim owner/generation, outcome and timestamps. |
-| Discovery | Product job + source sitemap + original alias; first/last seen, optional `lastmod`, most recent run. |
-| Product | `(target, id)`, normalized record, parser/record versions, original fetch/check times, HTTP metadata and archive reference. |
-| Save intent | Intent UUID, target/id, fetched-at time, API URL and safe HTTP metadata, archive path/hash/size, finalization state. |
-| Attempt/reprocess outcome | Sanitized outcome and provenance; enough to inspect failures and recover without archiving failed bodies. |
+Discovery and metadata fetching can run concurrently. Limit both worker counts and memory. Apply backpressure when the queue or capture buffers are full; discovery must yield capacity so product workers can drain the queue. Do not silently discard live-run work to keep admitting more requests. No local spool database is required.
 
-Product jobs are unique by `(target, id)` across runs. Sitemap jobs are unique by `(run, target, sitemap URL)`, so cycles and duplicate links cannot produce infinite sitemap work in a run. Current states include `pending`, `active`, `retry`, `persistence`, `successful`, `done` for a completed sitemap, and `failed`. `successful` is a product's terminal state for normal crawling.
+Retain bounded retries and HTTP/robots pacing from section 12. Attempt increments, queue moves and progress counters are in-memory operations. Checkpointed attempt counts may be stale after a crash; an uninterrupted pause/resume retains its in-memory budget, while restart recovery can repeat work. Do not promise exact lifetime-attempt accounting.
 
-The implementation stores data under `<user-home>/.kaijucrawl/`, with SQLite authoritative for metadata and the queue, and gzip archives under `archives/`. Current catalogue database schema version is **16**; product record schema is **2** and parser version is `drivethru-rust-1`. A fresh lean implementation need not copy unrelated application tables or schema version 16. **Opening an existing KaijuCrawl catalogue in place is a separate compatibility requirement:** it requires the existing migrations, schema, archive references, ownership protocol and preservation of unrelated data, not merely the simplified model above.
+## 6. Bulk metadata persistence
 
-Sources: [initial schema and indexes](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/migrations/002_local.sql), [runtime and versions](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/domain.rs#L6), [persistence operations](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/storage/sqlite.rs#L283).
+### Default internal tuning values
 
-## 4. Top-level crawl lifecycle
+These are implementation defaults, not additional mandatory UI settings.
 
-```text
-function start_crawl(config, cookies):
-    require target is selected and no other mutating operation is active
-    acquire exclusive OS file lock for this catalogue
-    open SQLite; migrate supported schemas under lock
-    create fresh owner UUID and advance generation; fence all mutations
-    validate archive storage and clean abandoned staging files
-
-    run = create_run("crawl")
-    mark unfinished older runs interrupted
-    for every product job whose state != successful:
-        assign it to run; set pending; reset per-run attempts and old outcome
-        # Existing due time and target cooldown are not reset.
-    enqueue the fixed root sitemap for this run
-
-    recover_pending_save_intents()
-    release abandoned active claims for this run
-    restore target-wide persisted cooldown
-    load required website and API robots policies
-    enqueue accepted sitemap declarations from those policies
-
-    while not stopped:
-        if authentication/policy failure or storage/ownership failure:
-            stop admitting requests; drain active work; report paused state
-            wait for explicit resume or stop
-            on resume: verify or reacquire ownership, validate storage,
-                       replace cookies, recover intents, reload robots
-            continue                       # same run, same attempt budgets
-
-        flush validated captures when batch full, flush timer expires,
-            no workers remain, or stopping
-        claim due jobs up to remaining bounded worker capacity
-        reserve at most one active sitemap job; use other capacity for products
-        start claimed jobs concurrently
-        collect completed results and persist their outcomes
-
-        if no ready/active/retry/persistence work and no pending sitemaps:
-            finish run                    # failed jobs may still exist
-        else if only future-due work remains:
-            wait until work is due or the run is interrupted
-
-    on stop: stop new requests, allow active work a short grace period,
-             cancel remaining work, flush completed valid captures,
-             release active claims to pending and finalize run
-    release ownership and the OS lock
-```
-
-This pseudocode combines `new_run`, `recover`, the scheduler and controller actions; exact event-loop structure is an implementation choice. The code inserts the new run and resets unfinished product jobs **before** intent recovery, but excludes products with unfinished intents from normal claims. Resuming a paused run is distinct from starting a new run: the same run's attempt budgets are preserved. A newly started run makes unsuccessful products eligible again but retains outstanding due times and server cooldowns.
-
-The default implementation claims at most 20 jobs per batch, saves at most 10 validated captures per batch and flushes a partial save batch after 500 ms or when work drains. These are batching parameters, not added network delays. It uses at most one active sitemap job per run so website discovery cannot occupy every worker, while product work and discovery proceed concurrently. With one worker, the sitemap takes that slot when due. Only mark an attempt as started immediately before sending the first request, after waiting for policy, rate limits, cancellation and ownership. Claiming or waiting by itself must not consume an attempt; redirects within that request do not consume additional job attempts.
-
-Sources: [scheduler job and run setup](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/scheduler.rs#L107), [scheduler loop](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/scheduler.rs#L406), [queue selection](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/storage/sqlite.rs#L357).
-
-## 5. Robots policies, HTTP and pacing
-
-### Policy setup
-
-Fetch and establish `/robots.txt` independently for the `www.drivethrurpg.com` website origin and the `api.drivethrurpg.com` API origin before normal crawling. A 404 or 410 means no restrictions were declared for that origin. An unavailable, invalid, oversized or challenged policy is not silently treated as permission: authentication or policy failures pause setup. Robots fetches themselves use eligible cookies, the fixed request User-Agent, target limits, timeouts and redirect rules, but do not require a previously loaded robots policy.
-
-For subsequent requests, check the policy for the exact request origin before each request, including redirects. A particular URL disallowed by robots yields a `robots` job failure; this differs from failing to establish the required policy, which pauses the target.
-
-Parse accepted `Sitemap:` declarations as discovery roots. For pacing, select the most specifically matching robots user-agent group(s), take the greatest valid `crawl-delay` or `request-rate` interval, and keep independent request-start pacing per origin. One origin's robots interval must not impose a delay on the other origin; both still share the target's overall worker capacity. The request header remains the fixed Firefox string; robots decisions use the KaijuCrawl identity.
-
-### HTTP requests
-
-- Maintain a separate bounded HTTP limiter and shared server cooldown **per target**, even if future targets share an API host. There is no global host-wide limiter and no additional fixed request interval.
-- Use HTTPS; allow only adapter-approved website/API origins. Recheck each redirect and cookies before sending. Normal requests allow up to eight redirects; robots requests allow up to six. Redirects must stay on the original origin. A product redirect must additionally preserve the exact `/api/vBeta/products/{id}` path and the two required query parameters `groupId=1`, `siteId=10`; it cannot switch products or site/group.
-- Send `Accept-Encoding: gzip`; use `Accept: application/json` for product requests and `*/*` otherwise. Bound both transferred and decoded bytes; reject unsupported encodings and malformed gzip.
-- Use 15 seconds connect timeout, 45 seconds read-inactivity timeout and 300 seconds total response timeout. Transport and read timeouts are transient job failures.
-- Record only safe successful HTTP metadata: status and, when at most 1,024 characters, `ETag` and `Last-Modified`. Do not persist failure response bodies or cookies in logs, records or archives.
-- `Retry-After` accepts nonnegative seconds or an HTTP date, is capped at one year, and extends a target-wide cooldown. HTTP 429 imposes at least 60 seconds. Persist the cooldown so a restart cannot bypass it.
-
-| Resource | Encoded / decoded limit |
+| Setting | Default |
 | --- | ---: |
-| Robots | 1 MiB |
-| Product response | 16 MiB |
-| Sitemap | 128 MiB |
-| Parser worker reply | 128 MiB |
-
-Sources: [policy parsing and per-origin pacing](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/http.rs#L55), [robots loading](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/http.rs#L255), [request execution](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/http.rs#L357).
-
-## 6. Sitemap discovery
-
-A sitemap can be plain XML or a gzip file detected by magic bytes. It may also arrive with HTTP gzip content encoding. Stream the decoded XML and accept `sitemapindex` and `urlset` roots, including their own namespace prefix. For direct `sitemap` or `url` children, read only their direct `loc` and optional `lastmod`; ignore extension locations such as `image:loc`. Reject malformed XML, document types, missing locations, multiple roots, excessive depth or oversized input. The implementation bounds a location to 8,192 bytes, `lastmod` to 1,024 bytes, nesting to roughly 128 levels, and emits batches of at most 1,000 entries.
-
-```text
-function process_sitemap(job, response):
-    for batch in stream_sitemap_entries(response.body, max_batch=1000):
-        transaction with owner/generation fence:
-            for entry in batch:
-                if entry came from sitemapindex:
-                    url = approved_sitemap_url(entry.loc)
-                    if url exists:
-                        insert sitemap job unique by (run, target, url)
-                else if entry came from urlset:
-                    id = extract_normalized_product_id(entry.loc)
-                    if id exists:
-                        upsert product job unique by (target, id)
-                        preserve successful state on conflict
-                        upsert sighting(source=job.url, alias=entry.loc,
-                                        lastmod=entry.lastmod, run=run)
-        commit transaction
-    mark sitemap job done
-```
-
-A sitemap failure after earlier batches have committed can leave those discoveries present. Retrying is safe because jobs and sightings have uniqueness constraints. `lastmod` is a provenance hint, not a trigger to refresh a successful product. Each new crawl scans root and nested sitemaps again.
-
-Source: [streaming sitemap parser](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/targets/sitemap.rs#L19), [discovery persistence](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/storage/sqlite.rs#L321), [sitemap tests](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/tests/contracts.rs#L325).
-
-## 7. Product fetch, validation and extraction
-
-### Main algorithm
-
-```text
-function process_product(job):
-    response = bounded_get(product_api_url(job.id), product_id=job.id)
-    classify HTTP, explicit login/restriction/challenge evidence
-    if classified failure: record outcome; return
-
-    product = parse_and_validate(response.body, job.id, response.final_url)
-    if parsing, identity or completeness fails: record failure; return
-
-    intent, compressed = prepare_immutable_archive(
-        catalogue_id, target, job.id, response.decoded_body,
-        fetched_at, response.final_url, safe_http_metadata)
-    persist intent and move job to persistence state
-    atomically publish archive and verify decoded size + SHA-256
-    submit (intent, product) for a fenced database commit
-```
-
-```text
-function parse_and_validate(body, expected_id, final_api_url):
-    reject body above 16 MiB
-    require final_api_url to match expected API origin, product ID,
-        path, groupId=1 and siteId=10
-    decode JSON with arbitrary-precision number preservation
-    reject explicit root/accepted-object restrictions, authentication gates,
-        API error envelopes and malformed JSON
-
-    choose candidate(s) only from the direct payload, its direct `data`,
-        or its direct `product` envelope; arrays are allowed at this level
-    use `attributes` as the candidate product when present
-    recognize direct ID fields productId, product_id, productID, id, @id, url
-    normalize each valid ID; require exactly one matching direct candidate
-    reject conflicting recognized IDs or an ID-only candidate
-    never search nested recommendations for a substitute product
-
-    optionally resolve publisher/authors/artists/editors/contributors through
-        direct JSON:API relationships: require a unique included item with
-        matching ID and, if provided, matching type
-    title = clean_plain(first of description.name, name, title)
-    full_description = first of description.description,
-        string-valued description, fullDescription
-    html, text = sanitize_and_extract(full_description)
-    require title.trim() != "" and text.trim() != ""
-    extract remaining metadata; preserve accepted source and outer envelope
-    return complete product for (drivethru, expected_id)
-```
-
-A short description cannot stand in for the full description. Gate detection must be based on actual response flags or explicit page/notice evidence, not on words appearing in a book description, hidden dialogs, scripts or asset URLs. The parser rejects explicit `ageGate`, `ageGateRequired`, `requiresAgeVerification`, `adultContentRestricted`, `loginRequired`, `authenticationRequired` or `accessDenied` flags at relevant parsed levels. A valid JSON body with the wrong ID, duplicate matching candidates, conflicting IDs, no substantive product fields, or only a nested matching recommendation is not a successful capture.
-
-### Worked example
-
-A product response for requested ID `42` might contain:
-
-```json
-{
-  "productId": "00042",
-  "description": {"name": "Example", "description": "<p>Full text.</p>"},
-  "price": "10.00",
-  "specialPrice": "0",
-  "onSale": true
-}
-```
-
-The relevant normalized fields include `product_id = "42"`, `title = "Example"`, `description_text = "Full text."`, `base_price = "10.00"`, `price = "0"`, `currency = "USD"` and `currency_source = "frontend_base_currency"`. The complete record also contains the other contracted fields and raw metadata. The fallback currency is explicitly labeled; it is not inferred from the price.
+| Product records per target-collection bulk | Up to 1,000 |
+| Encoded product payload per bulk | Up to 16 MiB |
+| Maximum age of a nonempty partial buffer | 5 seconds |
+| Metadata bulk operations in flight per catalogue | 1 |
+| Total buffered/in-flight encoded metadata payload | 64 MiB |
+| Queue/checkpoint interval | About 30 seconds |
+| Checkpoint operations in flight | At most 1 |
+| Individual checkpoint chunk target | At most 8 MiB |
+| Graceful-stop drain/flush budget | 5 seconds |
 
-### HTML cleanup
+The 16 MiB **batch** ceiling is an application memory policy, separate from the 16 MiB **document** limit. The driver can split a bulk into further wire batches. Count operation-envelope overhead and driver/decoded-object copies when selecting real memory limits; the encoded-byte budget does not bound total process RAM by itself.
 
-Sanitize full HTML and remove active/non-content elements including scripts, styles, templates, iframes, objects, embeds and noscript content. Produce both sanitized HTML and plain text. Preserve paragraph, heading, line-break, list and table boundaries; do not insert spaces inside inline text such as `to<b>get</b>her`. Collapse excess blank lines and normalize whitespace. A description that becomes empty after cleanup is incomplete.
+Flush a target buffer when it reaches 1,000 records, would cross the byte ceiling, reaches five seconds of age, needs to release global memory pressure, or the metadata phase is ending. A valid large product can be sent on its own. Never require 1,000 near-limit products to accumulate. Apply backpressure to completed-response delivery when the total memory budget is reached.
 
-### Metadata contract
+Use per-collection buffers and one metadata write coordinator per catalogue. HTTP requests and parsing remain concurrent; the coordinator can send one batch while bounded buffers accumulate subsequent captures. There is no global catalogue guard update, queue claim or run-counter write for each product or bulk.
 
-For full behavioral parity, emit these fields, retaining unknown nested source data as described below. Missing optional values remain null or empty collections as appropriate; do not fabricate them.
+### Write operations and idempotency
 
-| Group | Fields / extraction notes |
-| --- | --- |
-| Identity and provenance | `target_key`, `product_id`, `url`, `product_url` (canonical plus optional slug), `slug`, `source_kind=public_api`, `source_url`, `api_url`. |
-| Descriptions | `title`, `description_html`, `description_text`, `short_description`. |
-| Publisher and contributors | `publisher`, `publisher_id`, full `publisher_metadata`; deduplicated `authors`, `artists`, `editors`, `contributors`, and role/name `credits`. |
-| Commercial | `price`, `base_price`, `special_price`, `on_sale`, `currency`, `currency_source`, `lowest_prices` (digital, print, any), `formats`, `offers` with their original raw values. If `onSale` is true and special price is valid, it is the effective `price`; otherwise use base price. Zero is valid. |
-| Bibliographic | `page_count`, `isbn`, `sku`, `edition`; integer values must really be integral and fit the chosen stored integer type. |
-| Dates | A `dates` object retaining source keys beginning `date`, plus `fileLastModified` and `publicationDate`; normalized `date_created`, `date_modified`, `date_available`, `file_last_modified`. |
-| Taxonomy | `filters`, `primary_filters`, `categories`, `filter_groups`, `genres`, `themes`, `rule_systems`, `product_types`, `languages`, and joined `language`. Each taxonomy object retains its raw source, IDs, parent/ancestor IDs, slug and localized descriptions. |
-| Reviews and files | `rating`, `rating_count`, `review_count`, `review_ratings`, `reviews`, `ranking`, `files`, `file_size_reported`. If direct rating count is absent, sum all five nonnegative buckets only when all exist and the sum fits; a zero rating with zero reviews becomes unknown. |
-| Media and links | `cover_image`, `images`, `previews`, `description_links`. Relative image URLs use the image base; `previewFullFile` uses the watermark base; other preview links use the website base. Only HTTP(S) URLs without embedded credentials survive URL resolution. Media is referenced, not downloaded. |
-| Relations and flags | `related_products`, `is_bundle`, `bundle_id`, and present status/format/content flags. Related IDs do not themselves create crawl jobs. |
-| Version and raw data | `parser_version`, `record_schema_version`, `extraction_status=complete`, `missing_fields=[]`, `raw_metadata.public_api`; when the accepted object differs from the outer response, also keep `raw_metadata.api_response`. |
-| Capture metadata | `fetched_at`, `last_checked_at`, `reparsed_at`, safe `http`, `archive` and `raw_path`; discovery and crawl status are derived from job/sighting state in the existing catalogue view. |
+Use `InsertMany` or `BulkWrite` without starting an explicit transaction. Prefer independent upserts with stable identities when replay is expected. Deduplicate product identities within a bulk. Use unordered execution for independent records; do not put dependent writes for the same product into an unordered batch.
 
-Prices and ratings are preserved as exact decimal text; do not convert through binary floating point. JSON number parsing must retain source precision, including nested raw numbers. Explicit currency from the response is labeled `api_response`; absent currency becomes `USD` with source `frontend_base_currency`—this is an assumption, not a currency conversion.
+For a normal incremental capture, an insert-if-absent upsert such as `$setOnInsert` can retain the existing complete capture when a response is replayed. A duplicate identity is a reconciliation case, not evidence of a new successfully inserted product. A zero modification count can mean that the desired data is already present. If an existing legacy record is only an incomplete/failure stub, an insert-if-absent operation alone is insufficient: conditionally replace or repair it only while it still has that incomplete state/revision. Reconcile a conflict rather than overwriting a concurrently saved complete capture.
 
-For filter grouping, ancestor or parent ID `10` means genre, `20` product type, `30` rule system, `40` language, and `44498` format. Prefer English taxonomy descriptions (`languageCode=en` or `languageId=1`), otherwise the first description; preserve all localized labels and raw objects. Merge grouped values with applicable direct fields and deduplicate while preserving order. The [synthetic full-product fixture](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/tests/fixtures/full_product.json) and [metadata assertions](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/tests/contracts.rs#L203) are useful examples.
+For any mode that deliberately replaces a saved capture, use a single-document conditional update against the expected capture revision. Retrying a prepared operation retains its capture revision and payload. If another capture has replaced it, reload/reconcile instead of overwriting blindly. A replay must not reset an already stored image to pending for the same capture. Stable identity alone does not prevent an older retry from overwriting newer data.
 
-The current parser executes in a separate child process without credentials. It has a 30-second deadline **after a parser slot is acquired**, bounded input/output, and on timeout/cancellation kills and reaps the child. Parser and download capacity each default to the available logical CPU count, or one if unavailable. This isolation is part of the current hard-timeout behavior; replacing it with an in-process parser is a valid lean design only if its inability to forcibly terminate a stuck parse is accepted as a behavior change.
+Do not read back every successful write. Reconcile only ambiguous/conflicting outcomes, using bounded grouped identity/revision reads where possible. Use driver-supported retries where available, but make application replay safe on a standalone server as well; correctness must not depend on replica-set retryable-write support.
 
-Sources: [identity and envelope parsing](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/parser/extract.rs#L158), [field extraction](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/parser/extract.rs#L289), [isolated worker](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/parser/runtime.rs#L87).
+### Partial success and uncertainty
 
-## 8. Failure classification, retries and pause behavior
+A bulk is **not all-or-nothing**:
 
-| Observation | Current outcome |
-| --- | --- |
-| Transport failure, timeout, HTTP 408, 425, 429 or 5xx | `transient`; retry within the current run when attempts remain. |
-| HTTP 404/410 | `missing`; fail this job for this run. Robots 404/410 instead establish an empty policy. |
-| Ordinary product API HTTP 403, including a generic `access denied` message | `restricted`; fail this product for this run, do not pause other products, and retry on the next run. |
-| Product API HTTP 403 with an explicit login/session flag or recognized message; `cf-mitigated: challenge`; other recognized login/challenge evidence | `authentication`; pause the target. A 200 challenge is still a failure. |
-| Explicit age/product restriction | `restricted`; fail the product for this run. |
-| Failed required robots policy, unapproved redirect, or inability to establish policy | Policy/authentication pause as classified. A specific URL excluded by an established policy is a `robots` job failure. |
-| Malformed/oversized response, unsupported encoding, ambiguous/wrong identity, schema error, incomplete title/description, parse timeout | Fail that job for this run; do not archive its response. |
-| SQLite, archive, ownership or other local persistence failure | Stop new admissions and pause the crawl for recovery. |
+- Retain and count confirmed successful records even if other items fail.
+- Remove confirmed successes from the live pending buffer; never roll them back because a neighbouring record failed.
+- Isolate deterministic per-record errors so they cannot poison an endlessly retried batch.
+- Keep transient or unknown outcomes unresolved while the process is alive. Back off, reconcile by stable identity/revision, and retry safely; pause admissions when storage cannot make progress.
+- After a network/acknowledgement failure, do not assume every unreported item failed or every submitted item succeeded.
+- Do not mark a bulk “catalogued” merely because it was queued, serialized, sent, or returned an aggregate count whose per-item outcome is still uncertain.
 
-The general classifier checks explicit JSON gate flags before ordinary status handling; an ordinary HTTP 401 is classified as authentication. For HTML, the gate recognizer looks for explicit visible title/heading/short notice or a specific challenge form, and ignores hidden content, scripts, styles, templates and noscript. This avoids treating ordinary product text or security scripts as an access denial.
+No separate queue-status update is required before returning a successful product result to the scheduler. The saved product is the evidence of capture.
 
-Each job gets at most **five actual attempts per run**. Only transient failures retry immediately in the same run. For retry after attempt `n` (where the first completed attempt is `n=1`), compute:
+## 7. Best-effort checkpoints and restart
 
-```text
-base = min(10 seconds * 2^(n - 1), 3600 seconds)
-jitter = job_numeric_id mod 3 seconds
-job_due_delay = max(valid Retry-After delay, base + jitter)
-```
+A queue checkpoint is a **recovery hint**, not a transactional snapshot and not an authoritative completion ledger. Periodically coalesce current phase, selected targets, crawl mode, compact pending/active identifiers, retry due times, known cooldowns and recent small failure outcomes.
 
-A longer Retry-After also extends the persisted target cooldown shared by discovery, API calls and retries. The first four retry delays in a default five-attempt run start around 10, 20, 40 and 80 seconds, respectively. Once the budget is exhausted, mark the job failed for this run. The next new run resets the attempt count and retries unsuccessful products, subject to retained due times and cooldowns. Authentication/policy failures return the job to pending and pause; explicit resume continues the same run without resetting its attempt count.
+Default to about one checkpoint opportunity every 30 seconds, with at most one operation in flight. Skip/coalesce redundant checkpoint requests rather than stacking them behind metadata bulks. Attempt an additional checkpoint at phase boundaries and graceful stop if the time budget allows. Missing a checkpoint must not block each product save.
 
-Sources: [status and product-403 classifiers](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/targets/drivethru.rs#L107), [explicit gate detection](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/targets/drivethru/access.rs), [retry and outcome storage](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/storage/sqlite.rs#L420), [403 synthetic tests](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/http/tests.rs#L318).
+Store only compact identities/scheduling information, not buffered JSON or image bytes. Chunk large snapshots well below the document limit, label them with run/snapshot IDs, and identify which chunks belong together. A checkpoint may be incomplete; do not combine incompatible snapshots or treat a missing chunk as an empty queue. An implementation can publish a small manifest after writing its chunks, using ordinary independent writes; no multi-document atomic snapshot is required.
 
-## 9. Authentication and diagnostic boundary
+On restart:
 
-The HTTP engine can work with no cookies. Manual input is a single-line `name=value; ...` Cookie header, optionally prefixed with `Cookie:`. Reject control characters, malformed cookie names, extra header injection and inputs over 1 MiB. Preserve valid browser-style values and their ordering. The separately pasted website and API headers are tied to their **exact origins**; they are not forwarded to another host.
+1. Read the last usable checkpoint if one exists. Treat formerly active work as pending, not permanently claimed.
+2. Discard unusable portions and perform fresh sitemap discovery when metadata work was interrupted or completeness is uncertain. Merge/deduplicate checkpoint hints with discovery.
+3. Compare discovered IDs with saved complete products. A persisted product is retained even when its queue/checkpoint state lagged behind.
+4. Refetch products whose payload existed only in memory. No original capture-intent recovery or JSON archive is available or required.
+5. Derive remaining image work from the saved product's image state and capture revision.
+6. Restore known future due times/cooldowns and re-establish robots policies before new requests.
 
-Browser import reads only the selected local profile and relevant DriveThruRPG domains, using a read-only SQLite transaction so WAL contents are included. Never modify browser files or terminate the browser. Imported cookies retain host-only/domain, path, secure, expiry and supported first-party partition scope. When constructing a header, filter by the actual request URL and time, then sort longer paths first and older known creation times first. Do not flatten a cookie's scope just because it was imported.
+Do not advance a resume cursor in a way that permanently skips products whose payloads were never acknowledged. Checkpoint “done” flags alone cannot justify skipping discovery. A checkpoint may record the metadata phase as finished only after discovery/workers drained and every remaining metadata bulk outcome was resolved; if that phase marker is absent or uncertain, rediscover.
 
-Firefox import also supports a selected container, schema-specific expiry units and eligible cookies from the newest of the current `recovery.jsonlz4` and `sessionstore.jsonlz4` snapshots. It never falls back to old/upgrade backups. Database values win over duplicate session entries. Unsupported, corrupt or oversized snapshots generate a warning and leave database cookies usable; ambiguous/foreign/private contexts are omitted. Chromium profiles are also discoverable, but partitioned Chromium cookies are omitted and encrypted Chromium cookies on Windows are unsupported; manual paste is the fallback. Values and sensitive failure bodies must not appear in diagnostics.
+A crash may lose more than one physical bulk: captures being built, buffered records for multiple targets, in-flight unknown results, recent failure diagnostics and uncheckpointed discovery/queue changes are all volatile. This is bounded during execution but is not an exact “at most 1,000 lost records” promise. Repeated discovery/fetching and approximate resumed counters are accepted.
 
-**Test Access**, if retained, is a separate non-mutating diagnostic: establish both robots policies, check the website and optionally fetch and parse one known product ID. With no ID, the product API check is explicitly untested. Cookie presence or a public HTTP 200 does not prove account authentication. A failed required robots policy prevents subsequent website/product checks. Testing must not modify product jobs, discovery, archives or captures. In the current desktop controller, resuming an authentication pause requires a passed Test Access with the current credentials.
+Known server cooldowns still apply. A new Retry-After/429 cooldown should trigger a small coalesced target-cooldown write promptly, independently of product batches; this is rare control-state persistence, not a per-job ledger. Honour all available saved future cooldowns after restart. Exact preservation of an uncheckpointed cooldown across abrupt death is not promised.
 
-Lean implementation choice: an injected Cookie header provider can keep browser-specific import out of the core crawler. Supporting only manual paste would reduce scope and dependencies, but is a user-visible feature reduction from the current application.
+## 8. Document phase followed by image phase
 
-Sources: [cookie matching and paste validation](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/auth.rs#L24), [browser import](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/auth.rs#L374), [Firefox current session](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/auth/firefox_session.rs), [Test Access](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/scheduler.rs#L838).
+The default crawl has two phases across the **selected targets**.
 
-## 10. Durable capture and crash recovery
+### Phase A: documents
 
-SQLite and the filesystem do not share a transaction. Preserve the following ordering, or provide an equivalent protocol with the same recovery guarantees:
+Discover and fetch product responses, validate in memory, and submit metadata bulks. No primary-image downloads or S3 uploads run in this phase. A validated product's saved image state is pending or not-available; creating that state requires only its product write.
 
-```text
-function persist_validated_product(product, response):
-    sha = SHA256(response.decoded_body)
-    key = "{catalogue_uuid}/{target}/{id}/{sha}.json.gz"
-    gzip_bytes = gzip(response.decoded_body)
-    intent = {new UUID, target, id, fetched_at, api_url, safe_http,
-              key, sha, decoded_size, compressed_size, gzip, archived_at}
+End Phase A when discovery is exhausted or explicitly failed with an issue, all metadata workers/retries have reached terminal outcomes, and all prepared buffers and unknown bulk outcomes have been flushed/reconciled. Ordinary terminal product failures do not block the phase forever. An authentication/policy/storage pause is not successful phase completion.
 
-    transaction(fenced): insert unfinished intent; job.state = persistence
-    write gzip to private staging file; fsync it
-    atomically publish key without replacing an existing archive
-    sync relevant directories; read back, decompress, verify sizes and SHA-256
-    transaction(fenced):
-        require product identity and completeness
-        insert product if not already present
-        finalize intent
-        job.state = successful
-    commit
-```
+### Phase B: images
 
-The current implementation verifies all archive files in a save batch **before** opening the final SQL transaction, then commits product rows, finalized intents and successful states together. Existing good products are not overwritten by a later capture. Store only bodies that have already passed response classification, identity and completeness checks. Validate archive paths and reject traversal/symlinks and size/hash mismatches. Do not hold a database transaction open across network requests or archive file writes.
+Read saved products for the selected targets in bounded keyset pages, projecting only identity, capture/image revision, primary URL and existing image information. Include pending images and previously failed images eligible for a new run. Do not refetch successful product JSON just to retry its cover.
 
-```text
-function recover_pending_save_intents():
-    for intent in bounded UUID-ordered pages:
-        if product already exists:
-            mark intent finalized; continue
-        archive = read_and_verify(intent.archive)
-        if archive is absent:
-            delete unfinished intent; make product job pending; continue
-        if archive is corrupt:
-            pause for storage/integrity repair
-        product = parse_and_validate(archive.body, intent.id, intent.api_url)
-        transaction(fenced): insert product, finalize intent,
-                             mark job successful
-```
+Queue those candidates in memory and process them with bounded image-download/upload concurrency. Update product image fields in small bulk groups, using the same 1,000-operation/16 MiB/five-second limits where applicable. No durable image claim or upload-intent document is required. In-memory deduplication prevents multiple active image tasks for the same capture within a run.
 
-**Single-writer safety:** An OS file lock prevents two live mutating owners. Each acquisition also installs a fresh owner UUID and increments a SQLite generation. Every authoritative write verifies the owner/generation inside its transaction and again before commit, rejecting stale writers. Process death releases the OS lock, permitting takeover and recovery without waiting for a lease timeout. The implementation rechecks ownership periodically and before request starts. A lock row without a real process lock is not equivalent.
+Retry transient image errors within a bounded per-run budget. Terminal image failures remain eligible in a later run; they do not invalidate the saved product. A normal crawl ends when eligible image work has finished or reached a terminal issue outcome and pending image-result updates have been resolved. Pending/retrying work keeps the image phase active; a storage outage pauses it.
 
-Sources: [archive key, publication and verification](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/storage/archive.rs#L82), [intent and commit](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/storage/sqlite.rs#L458), [ownership fencing](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/storage/sqlite.rs#L48), [recovery](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/scheduler.rs#L107).
+### Lifecycle pseudocode
 
-## 11. Reprocessing and shutdown
+~~~text
+function crawl(saved_config, selected_targets, mode):
+    validate both saved storage configurations and required access
+    initialise reused database client, memory queues and bounded buffers
+    acquire optional advisory active-run lease
+    restore usable recovery hints and known cooldowns
+    establish target policies and cookies
 
-```text
-function reprocess_saved_responses():
-    acquire the same exclusive catalogue ownership and validate archives
-    recover outstanding capture intents
-    for each product with saved_parser_version != current_parser_version,
-        in bounded keyset pages:
-        body = read and verify its original archive
-        result = parse_and_validate(body, product.id, saved_api_url)
-        if result is complete and identity matches:
-            atomically replace parser-derived fields and parser/schema version
-            set reparsed_at = now
-            preserve fetched_at, last_checked_at, archive/ref, HTTP info,
-                discovery, product identity and successful state
-        else if parser reports a product failure:
-            keep the previous complete record and record the failure separately
-        else if archive/storage is missing or corrupt:
-            pause for storage repair
-    release ownership
-```
+    phase = documents
+    discover and fetch metadata concurrently under queue/memory bounds
+    for each validated capture:
+        prepare complete product with stable identity and capture revision
+        set initial image state in that same product document
+        submit to collection buffer
+    during this phase:
+        flush on record/byte/age/memory limits
+        reconcile partial and unknown bulk results
+        coalesce occasional checkpoints
+    drain metadata workers and resolve the final partial bulks
+    if paused or stopped: use bounded stop/recovery rules; return
+    best_effort_checkpoint(metadata_finished = true)
 
-No website or API requests are made during this operation, and no new capture archive is created. Records already on the current parser version are skipped. The original stores results and a checkpoint by run; successful records are naturally skipped on a later reprocessing run because their parser version is now current.
+    phase = images
+    scan saved pending/eligible-failed image states in bounded pages
+    download and upload images with bounded independent workers
+    buffer conditional product-image updates
+    flush and reconcile final image results
+    best_effort_checkpoint(phase = complete, summary)
+    release optional advisory lease
+~~~
 
-On Stop, stop admitting new requests immediately and allow up to **five seconds** for active work to drain. Then hard-cancel remaining work, kill/reap parser subprocesses as needed, persist completed validated work, return uncompleted active claims to pending, finalize the run and release ownership. Abrupt process death must remain recoverable via the lock and intent protocol.
+A saved metadata-finished checkpoint can allow restart directly into Phase B. If the checkpoint is missing or suspect, replaying Phase A discovery is acceptable because saved complete products are skipped. Phase B can always reconstruct its work from products without a complete saved image queue.
 
-Sources: [reprocessing loop](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/scheduler.rs#L610), [reprocess commit](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/storage/sqlite.rs#L644), [shutdown and run loop](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/scheduler.rs#L406).
+## 9. Primary cover images and S3
 
-## 12. Lean implementation boundary
+Select one primary cover URL from each accepted response. The historical DriveThruRPG adapter prefers `webImage` and then `image`, resolving relative paths against `https://d1vzi28wh99zvq.cloudfront.net/`. Each other storefront adapter must verify its own URL/origin rules; shared platform branding does not establish identical endpoints.
 
-A small implementation can use five replaceable pieces: **target adapter**, **HTTP/robots and cookie provider**, **scheduler/queue**, **pure product parser**, and **durable store/archive**. They can live in one crate and need no Tauri, TypeScript, OpenAI integration, classifier, search index, distributed queue or extra storefront abstraction. Preserve the target key in persisted identities so a later adapter does not collide.
+Retain other image/preview/file references in the complete source response, but do not download galleries, previews or product files as part of this requirement. Download original primary-image bytes without mandatory resizing or conversion. Keep existing bounded size/timeouts, image content validation, approved public HTTP(S) origins, redirect checks, cookie scope, robots policy and per-origin pacing. Never upload an HTML challenge as an image or forward storefront cookies to unrelated origins.
 
-For a practical first implementation, keep the queue and capture state in SQLite, use a bounded async scheduler with one write coordinator, and keep parsing pure behind an optional isolated worker. The exact crate choices, module boundaries and internal event transport are not externally observable. Keep the verified-archive/intent protocol, bounded work, per-origin robots pacing, target-wide cooldown, first-capture rule and safe cookie scope if behavior parity matters.
+Use a safe product-scoped, content-addressed key such as:
 
-These are explicit reductions if chosen; they are **not** equivalent to the current crawler:
+~~~text
+prefix/catalogue/target/product_id/cover/sha256
+~~~
 
-- Dropping the full extracted field contract or raw source fidelity in favor of title/description only.
-- Treating a product 403 as a whole-target authentication failure, or treating all challenge pages as ordinary product failures.
-- Ignoring robots rules/cooldowns, unbounded retries, or refetching successful products on `lastmod` changes.
-- Skipping archives, crash recovery, owner fencing, parser reprocessing or hard parser termination.
-- Omitting browser import or Test Access while claiming feature parity.
-- Reusing a simplified schema against an existing KaijuCrawl catalogue without migration and preservation work.
+Keep keys within S3's limits and reject unusable configuration instead of truncating it. Use conditional creation, such as `If-None-Match: *`, to avoid overwriting an existing object. Verify successful storage using a supported checksum/size result or readback. If an existing key or uncertain result must be reconciled, verify it before reuse; ETag alone is not a general content hash. Distinguish missing objects, permission failures and temporary outages. See [S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
 
-### Source-observed edge case
+After a verified upload, buffer a **single-document conditional update** matching product identity and the saved capture/image revision. Set the image state and reference together: bucket, endpoint/namespace where needed, object key, optional object version, SHA-256, byte size, media type and observation time. Do not replace the whole product or overwrite newer source/capture fields. A stale or deleted capture yields no matching update and is reconciled without forcing the old result onto newer data.
 
-The adapter accepts `https://drivethrurpg.com/...` as a website alias, including for sitemap URLs, but normal policy setup loads the `www` website origin and the API origin only. Because the HTTP layer requires a policy for the exact request origin, a nested sitemap on the bare-domain origin can be accepted during discovery and then pause with “Robots policy not loaded.” Product aliases are normalized to the canonical/API origins before fetching. A new implementation should make an explicit choice: reproduce this behavior for strict parity, or load and enforce a separate policy for each approved origin it actually requests. The latter is a deliberate correction, not behavior verified in this snapshot.
+Image states are `pending`, `stored`, `not_available` and `failed`. Persist a bounded error with a failed image result where possible. Only an acknowledged update after verified upload means the image is stored in the catalogue. A zero modification count on replay is not itself a failure; distinguish already-saved identical state from a revision conflict.
 
-Sources: [approved hosts](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/targets/drivethru.rs#L34), [robots origins](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/http.rs#L255), [exact-origin policy check](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/http.rs#L387).
+There is **no MongoDB/S3 transaction and no durable upload-intent protocol**. If the process crashes after upload but before saving its reference, an unreferenced S3 object can remain and the product can still say pending. A later image phase may download/upload or verify/reuse it again. This extra work and orphan storage are accepted; automatic orphan deletion is not part of this task and must not remove referenced objects.
 
-## 13. Suggested conformance scenarios
+If an image-result update would exceed the product document limit, keep the complete product and previous image reference intact, record a compact image-metadata-size issue, and stop repeating that deterministic failure during the run. Preserve the failure hint in the next available checkpoint. A future run may rediscover it if the hint was lost.
 
-These are fixture-based acceptance scenarios for the reimplementation; they describe expected behavior and do not claim tests were run for this document.
+## 10. Single active writer and advisory ownership
 
-1. **Identity and discovery:** `00042` and `42` from several valid aliases create one target-scoped product job; foreign URLs, ID zero, malformed IDs and extra-host credentials create none. Cyclic nested sitemaps terminate within a run. Extension `image:loc` is ignored.
-2. **Repeated runs:** Root/nested sitemaps are requested on both runs; a successful product is requested once total, even with a later `lastmod`; an unsuccessful product becomes eligible in the second run. A future persisted cooldown/due time is still honored.
-3. **Completeness and isolation:** An exact matching ID with a full title/description succeeds. Missing full description, script-only description, wrong ID, two matching direct candidates, conflicting IDs, a nested recommendation match and malformed JSON all fail without a product row or archive.
-4. **403 versus authentication:** Generic product 403 fails only that product with no immediate retry; another product can succeed. Explicit `sessionExpired=true` or `cf-mitigated: challenge` pauses the target. A challenged robots response prevents crawl setup. No failed response body appears in durable state or logs.
-5. **Pacing:** A website robots delay does not delay API starts, and an API delay does not delay website starts. A target-wide Retry-After delays both; cancellation while waiting does not spend an attempt. Distinct target limiters remain independent.
-6. **Retry budget:** A transient failure waits approximately 10 + job-ID jitter seconds before the first retry, honors a longer Retry-After, stops after five started attempts, and is eligible in a later run. Ordinary product 403 is not retried within that run.
-7. **Metadata fidelity:** Preserve a high-precision decimal exactly, a zero sale price, optional-null fields, nested raw data, taxonomy labels, inline text (`together`), paragraph boundaries, resolved media links and direct relationship type/ID matching. Verify the repository's synthetic full-product fixture.
-8. **Archive boundaries:** Inject a crash before intent, after intent before archive, after archive before SQL commit, and after commit. On restart, recover or requeue without duplicate success or lost successful records. Corrupt the compressed body, decoded length or SHA-256 and require a storage/integrity failure.
-9. **Ownership and stop:** Two writers cannot mutate the same catalogue; a stale generation cannot commit. After process death a new owner takes over. Stop drains valid work within the grace period, releases claims and kills/reaps a stuck parser.
-10. **Reprocessing:** A newer parser updates derived metadata from the archive without network traffic or changed observation times. Incomplete or wrong-identity reparsing retains the prior successful record; a corrupt archive pauses as a storage problem.
-11. **Cookies and diagnostics:** Website/API pasted cookies do not cross origins. Imported domain/path/expiry/secure/container/partition rules are enforced, no secret values leak, and Test Access leaves queues, products and archives unchanged.
+The supported operating model is **one active mutating crawl/reprocess operation per catalogue**. Enforce this within an application instance. Local and remote MongoDB hosting are both supported; multiple simultaneous distributed crawler owners are not a required feature.
 
-Reference tests: [contracts](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/tests/contracts.rs), [HTTP](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/http/tests.rs), [end-to-end scheduler](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/src/scheduler/tests.rs#L430), [persistence](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/tests/persistence.rs), [browser import](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/tests/browser_import.rs), and [parser process](https://github.com/Rainbows4Blood/kaijucrawl/blob/f2ced97ac62f24e32abd51fd10b88fb7bda344af/tests/parser_process.rs).
+An optional per-catalogue lease may discourage accidental overlap between instances. Acquire/renew/release it with occasional atomic single-document operations and server-time expiry checks. Renew on a coarse heartbeat; never touch the lease as part of each product, queue move, image result or bulk write.
+
+If a live lease held by another instance is observed, do not start a second run. If ownership loss or renewal failure is observed during a run, pause new admissions and new writes. Already submitted operations can still finish.
+
+**The old strict fencing guarantee is removed.** A lease check followed by separate writes cannot guarantee that no delayed write lands after takeover. Capture-revision filters protect particular product updates; they are not catalogue-wide stale-owner exclusion and cannot prevent every stale insert into a previously absent product.
+
+Treat checkpoints/run summaries as best effort under overlap, retain stable unique product identities, and make ordinary replay safe. Do not reintroduce a shared ownership write in every product operation to emulate the old transaction protocol. Strong multi-owner coordination would be a separate future requirement.
+
+## 11. Pause, stop, reprocessing and visible progress
+
+### Stop and interruption
+
+On Stop, stop admitting new requests immediately, allow up to five seconds for active work and acknowledged flushes/checkpoints, then cancel remaining operations. Flush validated captures/image results if the deadline and storage availability permit. Do not promise successful flushing under an outage or force-kill. Never start the image phase merely to drain a metadata Stop request.
+
+Abrupt death may lose volatile buffers and queue state. Existing acknowledged product documents remain the recovery basis. In-flight writes may have partially completed; the next run reconciles via stable identities. No durable return-to-pending operation is required for every abandoned task.
+
+### Reprocessing
+
+Read the stored MongoDB source response in bounded pages and recompute requested parser-derived fields in memory. Preserve original observation times and safe source metadata. Use bounded conditional single-document bulk updates; preserve previous complete records if validation/encoding/size checks fail.
+
+Reprocessing makes no storefront requests and no S3 uploads. Whenever it adds, changes or removes the primary-image candidate, atomically assign a new image revision and set the state to pending when a candidate exists or not-available when it does not, preserving the original capture observation time. Retain that new image revision across retries. Image completion filters must match it as well as the capture revision, so an old download cannot attach the previous candidate's bytes after reprocessing. It uses the same saved-storage configuration gate and best-effort checkpoint/replay rules, with no archive or save-intent recovery.
+
+### Dashboard semantics
+
+- **Queued** counts discovered products still awaiting confirmed metadata persistence, including active, retrying, buffered and unresolved writes. Terminal failed products appear in Issues.
+- **Catalogued** counts confirmed complete product records in the chosen dashboard scope. Buffering a product or replaying an already saved identity must not increase it.
+- Counts can jump by a batch. Update the UI from in-memory counters at a modest interval; do not run aggregate/count queries or increment a shared MongoDB counter for every product.
+- Show whether the current phase is document capture or image downloads. Images run after documents, with image activity/issues in the existing activity area; no additional storefront-count column is required.
+- Image failure does not subtract a valid product from Catalogued. Queued can be zero while image work keeps the crawl active.
+- Resumed queue/run-progress estimates may change after reconciliation because checkpoints are stale. Do not present a drained queue or completed run as proof of exhaustive storefront coverage.
+
+The precise total-catalogue versus current-run scope of the existing Catalogued display remains a UI choice; whichever is used must distinguish already stored products from newly acknowledged captures and avoid double counting retries.
+
+## 12. Retained crawler behaviour
+
+Keep the following behaviour from the [historical reference](reference/KaijuCrawl_Rust_Crawler_Reference.md), while applying this document's storage, scheduling and recovery rules:
+
+| Area | Retained behaviour | Historical reference |
+| --- | --- | --- |
+| Target identity | Positive ASCII decimal product IDs normalized as strings; target-scoped uniqueness, approved URLs and canonical API requests; no guessed ID enumeration or recommendation crawling | Section 2 |
+| Sitemap parsing | Bounded XML/gzip parsing, direct loc/lastmod children, cycle protection, approved origins and no extension image:loc discovery | Section 6 parsing prose only |
+| HTTP and robots | Per-origin policy/pacing, target cooldowns, bounded redirects/body sizes/timeouts and safe metadata | Section 5, with checkpoint persistence changes from section 7 above |
+| Product acceptance | Exactly one direct matching candidate, full nonempty title/description, original JSON information, explicit gate detection and no nested recommendation substitute | Section 7 pure parse_and_validate and HTML cleanup |
+| Response failures | Product-only ordinary 403, explicit authentication/challenge pause, bounded transient retries and terminal malformed/missing/restricted outcomes | Section 8, with in-memory scheduling and current storage errors |
+| Cookies | Manual paste and Firefox import, correct origin/domain/path/expiry/container scope, protected secrets and non-mutating diagnostics | Section 9 |
+
+Do not import historical fenced discovery pseudocode, archive publication, durable claims or per-attempt storage while reusing the parsers. The full historical extracted-field schema is optional; preserving complete source JSON does not require duplicating every derived field.
+
+Keep the existing five-attempt transient retry budget during an uninterrupted run and approximately 10/20/40/80-second backoff plus bounded jitter; a longer valid Retry-After takes precedence. Identity, completeness and deterministic size failures do not use transient retries. Pause/resume within the same process preserves memory; abrupt restart has the checkpoint limitations already stated.
+
+HTTP response ceilings remain 1 MiB for robots, 16 MiB for products and 128 MiB for sitemaps, with both transferred/decoded bounds where applicable. Parser-work limits and cancellation remain bounded; processing in memory does not authorize an unbounded parse or dropping existing response checks.
+
+The inspected Rust implementation validates only DriveThruRPG's adapter. Verify the other three storefronts' API parameters, origins, primary images and authentication behaviour separately. The requirement for four targets does not invent compatibility evidence.
+
+Read-only SQLite transactions used to obtain a consistent Firefox cookie snapshot are outside the removed MongoDB persistence transaction policy. Browser files must remain unmodified.
+
+## 13. Acceptance and performance scenarios
+
+These are implementation acceptance requirements, not claims that a running crawler or benchmark was executed while editing this specification.
+
+1. **Standalone and remote-capable setup:** A standalone MongoDB instance passes storage preflight without transaction support. The same application can use a configured remote server. MongoDB and S3 settings remain mandatory.
+2. **No transaction or per-job write path:** Metadata ingestion issues no explicit multi-document transaction, durable queue claim, per-attempt record, save/upload intent, ownership-fence write or shared counter update per product.
+3. **Bulk limits:** Small valid products accumulate toward 1,000 records; byte/age/global-memory bounds and phase end flush smaller batches. A near-limit valid product is handled alone. Record the actual batch-size distribution.
+4. **Acknowledged success:** Buffered/submitted records remain Queued until known saved. Confirmed identity matches on safe replay do not create duplicates or inflate counts.
+5. **Partial bulk error:** A deterministic failed item does not discard neighbouring successes. Transient and ambiguous outcomes are reconciled/replayed safely; a timeout is not interpreted as proof of zero writes.
+6. **Loss before flush:** Kill the process with unflushed captures and uncheckpointed queue changes. Losing that work is accepted. Fresh discovery/replay finds still-discoverable missing products and keeps already saved ones; it cannot recover an unsaved response that the source no longer provides.
+7. **Stale/partial checkpoint:** Missing chunks, outdated active flags or a done cursor ahead of saved products cannot permanently skip data. Checkpoints never contain raw product bodies and are not written per queue move.
+8. **Size failure:** An oversized BSON product fails without truncation/spillover. A failed refresh preserves the previous successful payload/reference. Its small diagnostic can lag or be lost before checkpoint.
+9. **Phase isolation:** While Phase A runs, no product-image download/upload runs. Phase B starts only after the final metadata bulk is resolved. Restart after metadata capture reconstructs pending images from products.
+10. **Image retry and crash:** A missing/failed image preserves the product. Killing the process after upload but before reference persistence can leave an orphan and pending image; later replay is safe and no upload intent is required.
+11. **Stale image completion:** Updating with an old capture/image revision cannot attach the old result to a newer capture. Content-addressed objects do not overwrite unrelated/newer bytes.
+12. **Advisory ownership:** An observed active owner prevents ordinary duplicate start, and observed loss pauses admissions. Tests must not claim the old strict no-stale-write-after-takeover guarantee.
+13. **Stop and reprocessing:** Graceful stop attempts bounded flush/checkpoint; forced exit can lose buffers. Reprocessing uses saved MongoDB JSON without storefront/image fetches or S3 uploads, preserving old valid data on failure. MongoDB access and configured-storage preflight may still use the network.
+14. **Crawl semantics:** Identity, response validation, cookie scope, robots, 403/authentication distinctions and bounded retries remain intact. Repeat discovery cannot duplicate product identity.
+15. **Measured throughput:** Replay identical captured inputs into the real bulk persistence path, separating metadata and image phases. Measure acknowledged records/second, bytes/second, actual bulk count/size, command count per product, writer wait time and memory. Include partial failures and pre-existing products in a realistic collection; do not claim performance from enqueue speed alone.
+
+Performance tuning should first reduce command count, serialization, unnecessary lookups and competing control-state writes. Do not reintroduce transactions or weaken saved-data acknowledgement merely to improve a counter. No particular records/second result is guaranteed without a representative workload measurement.
+
+## 14. Decisions deliberately left outside this change
+
+- Full-recrawl refresh/overwrite and history-retention semantics remain open. This update does not authorize replaying an old result over a newer record; any future replacement policy must use the single-document revision rules above.
+- Exact normalized catalogue schema and advanced search remain open; complete source retention is already required.
+- Four storefront adapters must be verified individually; the historical source only supplies DriveThruRPG evidence.
+- Migration from existing KaijuCrawl SQLite/archives or an earlier MongoDB job/intent schema is separate. Old operational collections must not remain authoritative accidentally; retain saved product data and require an explicit migration plan for destructive cleanup.
+- Strong distributed multi-owner coordination and automatic S3 orphan cleanup are separate future features.
+
+The [historical reference](reference/KaijuCrawl_Rust_Crawler_Reference.md) remains available for source details and evidence. Its old storage, restart and ownership conformance scenarios are not current implementation gates.
+

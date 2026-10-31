@@ -172,7 +172,7 @@
           <div class="controls"><button class="action" id="pause" type="button"><span id="pause-label">Pause</span></button><button class="action" id="stop" type="button">Stop crawl</button></div>
         </div>
         <section class="overview" aria-label="Current crawl overview">
-          <div class="overview-head"><div class="run-state"><span class="state-indicator" id="run-dot" aria-hidden="true"></span><span id="run-label" aria-live="polite">Crawl in progress</span></div><div class="elapsed">Elapsed <strong>12m 38s</strong></div></div>
+          <div class="overview-head"><div class="run-state"><span class="state-indicator" id="run-dot" aria-hidden="true"></span><span id="run-label" aria-live="polite">Capturing documents</span></div><div class="elapsed">Elapsed <strong>12m 38s</strong></div></div>
           <div class="stats">
             <div class="stat"><div class="stat-label">Queued</div><div class="stat-value">21</div></div>
             <div class="stat"><div class="stat-label">Catalogued</div><div class="stat-value">4,024</div></div>
@@ -180,13 +180,13 @@
           </div>
         </section>
         <section aria-labelledby="storefront-progress">
-          <div class="section-heading"><h2 id="storefront-progress">Storefront progress</h2><span class="section-meta" id="progress-summary">1 completed · 1 active · 2 waiting</span></div>
+          <div class="section-heading"><h2 id="storefront-progress">Storefront progress</h2><span class="section-meta" id="progress-summary">1 captured · 1 active · 2 waiting</span></div>
           <div class="source-table">
             <div class="source-head" aria-hidden="true"><span>Storefront</span><span>Status</span><span>Queued</span><span>Catalogued</span></div>
-            <div class="source-row"><div class="source-ident"><span class="emblem">DR</span><span class="source-name">DriveThruRPG</span></div><div class="source-state complete">Completed</div><div class="source-number"><span class="small-label">Queued</span>0</div><div class="source-number"><span class="small-label">Catalogued</span>3,205</div></div>
-            <div class="source-row is-active"><div class="source-ident"><span class="emblem warm">DM</span><span class="source-name">DMs Guild</span></div><div class="source-state active-state" id="source-state">Crawling</div><div class="source-number"><span class="small-label">Queued</span>21</div><div class="source-number"><span class="small-label">Catalogued</span>819</div></div>
+            <div class="source-row"><div class="source-ident"><span class="emblem">DR</span><span class="source-name">DriveThruRPG</span></div><div class="source-state complete">Docs saved</div><div class="source-number"><span class="small-label">Queued</span>0</div><div class="source-number"><span class="small-label">Catalogued</span>3,205</div></div>
+            <div class="source-row is-active"><div class="source-ident"><span class="emblem warm">DM</span><span class="source-name">DMs Guild</span></div><div class="source-state active-state" id="source-state">Capturing</div><div class="source-number"><span class="small-label">Queued</span>21</div><div class="source-number"><span class="small-label">Catalogued</span>819</div></div>
             <div class="active-detail"><span id="source-detail">Fetching product details · 2 issues</span><button class="link-button issue-toggle" type="button" aria-controls="issue-panel" aria-expanded="false">View issues</button></div>
-            <div id="issue-panel" class="issue-panel" hidden><strong>2 products need attention</strong><div><span>Example product 10482</span><span>Product image could not be downloaded</span></div><div><span>Example product 20491</span><span>MongoDB document exceeds 16 MiB</span></div></div>
+            <div id="issue-panel" class="issue-panel" hidden><strong>2 products need attention</strong><div><span>Example product 10482</span><span>Product response has no full description</span></div><div><span>Example product 20491</span><span>MongoDB document exceeds 16 MiB</span></div></div>
             <div class="source-row"><div class="source-ident"><span class="emblem">SV</span><span class="source-name">Storytellers Vault</span></div><div class="source-state" data-queued>Waiting</div><div class="source-number empty-number"><span class="small-label">Queued</span>—</div><div class="source-number empty-number"><span class="small-label">Catalogued</span>—</div></div>
             <div class="source-row"><div class="source-ident"><span class="emblem warm">UE</span><span class="source-name">Ulisses ebooks</span></div><div class="source-state" data-queued>Waiting</div><div class="source-number empty-number"><span class="small-label">Queued</span>—</div><div class="source-number empty-number"><span class="small-label">Catalogued</span>—</div></div>
           </div>
@@ -195,10 +195,10 @@
           <div class="section-heading"><h2 id="recent-activity">Latest activity</h2><button class="link-button" type="button" id="show-more" aria-expanded="false">Show more</button></div>
           <div class="activity-list">
             <div class="activity-row"><span class="activity-time">14:35:10</span><span class="activity-store">DMs Guild</span><span class="activity-message event-error">2 products need attention</span><button class="link-button issue-toggle" type="button" aria-controls="issue-panel" aria-expanded="false">View issues</button></div>
-            <div class="activity-row"><span class="activity-time">14:34:55</span><span class="activity-store">DMs Guild</span><span class="activity-message">Stored product image</span></div>
-            <div class="activity-row"><span class="activity-time">14:33:01</span><span class="activity-store">DriveThruRPG</span><span class="activity-message">Storefront crawl completed</span></div>
-            <div class="activity-row extra-activity" hidden><span class="activity-time">14:32:44</span><span class="activity-store">DriveThruRPG</span><span class="activity-message">Finished checking listing pages</span></div>
-            <div class="activity-row extra-activity" hidden><span class="activity-time">14:22:32</span><span class="activity-store">Crawler</span><span class="activity-message">Crawl started</span></div>
+            <div class="activity-row"><span class="activity-time">14:34:55</span><span class="activity-store">DMs Guild</span><span class="activity-message">Saved a batch of 100 product documents</span></div>
+            <div class="activity-row"><span class="activity-time">14:33:01</span><span class="activity-store">DriveThruRPG</span><span class="activity-message">Product documents saved; images follow after capture</span></div>
+            <div class="activity-row extra-activity" hidden><span class="activity-time">14:32:44</span><span class="activity-store">DriveThruRPG</span><span class="activity-message">Finished sitemap discovery</span></div>
+            <div class="activity-row extra-activity" hidden><span class="activity-time">14:22:32</span><span class="activity-store">Crawler</span><span class="activity-message">Document capture started</span></div>
           </div>
         </section>
       </main>
@@ -229,18 +229,18 @@
         state = next;
         const running = state === 'running';
         const paused = state === 'paused';
-        runLabel.textContent = running ? 'Crawl in progress' : paused ? 'Crawl paused' : 'Crawl stopped';
+        runLabel.textContent = running ? 'Capturing documents' : paused ? 'Crawl paused' : 'Crawl stopped';
         runDot.classList.toggle('paused', paused);
         runDot.classList.toggle('stopped', !running && !paused);
         pause.querySelector('#pause-label').textContent = paused ? 'Resume' : 'Pause';
         pause.disabled = state === 'stopped';
         stop.textContent = state === 'stopped' ? 'Restart preview' : 'Stop crawl';
         stop.classList.toggle('primary', state === 'stopped');
-        sourceState.textContent = running ? 'Crawling' : paused ? 'Paused' : 'Stopped';
+        sourceState.textContent = running ? 'Capturing' : paused ? 'Paused' : 'Stopped';
         sourceState.classList.toggle('active-state', running);
         sourceState.classList.toggle('paused-state', paused);
         sourceDetail.textContent = running ? 'Fetching product details · 2 issues' : paused ? 'Paused while fetching product details · 2 issues' : 'Stopped while fetching product details · 2 issues';
-        progressSummary.textContent = running ? '1 completed · 1 active · 2 waiting' : paused ? '1 completed · 1 paused · 2 waiting' : '1 completed · 1 stopped · 2 not started';
+        progressSummary.textContent = running ? '1 captured · 1 active · 2 waiting' : paused ? '1 captured · 1 paused · 2 waiting' : '1 captured · 1 stopped · 2 not started';
         root.querySelectorAll('[data-queued]').forEach(item => { item.textContent = state === 'stopped' ? 'Not started' : 'Waiting'; });
       }
       pause.addEventListener('click', () => setState(state === 'paused' ? 'running' : 'paused'));
@@ -267,3 +267,4 @@
   </div>
 </body>
 </html>
+
