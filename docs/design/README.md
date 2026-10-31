@@ -1,19 +1,21 @@
 # Crawler dashboard design handoff
 
-These two interactive mockups record the visual direction for Nekonomicon's Tauri desktop app. They are design references, not application code or a functioning crawler.
+These three interactive mockups record the visual direction for Nekonomicon's Tauri desktop app. They are design references, not application code or a functioning crawler.
 
 ## Preview the screens
 
-1. Open [crawler-setup.html](crawler-setup.html) in a modern browser. Select storefronts, open **Set up cookies**, switch between Firefox and manual paste, toggle **Full recrawl**, and select **Start crawl** for an example activity state.
-2. Open [crawler-active.html](crawler-active.html) for the more detailed active-run view. Try **Pause**, **View issues**, and **Show more**. The controls demonstrate UI states using sample data; they do not run a crawler.
+1. Open [crawler-setup.html](crawler-setup.html) in a modern browser. **Start crawl** is initially disabled because storage is not configured. Select storefronts, open **Set up cookies**, switch between Firefox and manual paste, and toggle **Full recrawl**.
+2. Choose **Configure storage** to open [crawler-settings.html](crawler-settings.html). Enter placeholder MongoDB and S3 settings and save each one. Follow **Back to crawler**: with both saved and at least one storefront selected, **Start crawl** displays an example activity state. Try removing one configuration to see the gate again. **Test connection** is simulated and does not contact a service.
+3. Open [crawler-active.html](crawler-active.html) for the more detailed active-run view. Try **Pause**, **View issues**, and **Show more**. This independent example can be opened without starting a crawl; it uses sample data and does not bypass the real application's storage gate.
 
-The links above the mockups switch between the two references. No build step, server, internet connection, or installed dependencies are needed. Example Firefox profiles, product identifiers, progress, and errors are fictional. Cookie import is simulated: do not use real credentials in the mockups.
+The links above the mockups switch between the three references. No build step, server, internet connection, or installed dependencies are needed. Example Firefox profiles, product identifiers, progress, and errors are fictional. Cookie import, connection tests and saving settings are simulated: do not use real credentials in the mockups. Only example configured/not-configured flags are passed in links; entered field values are not persisted or placed in the URL.
 
 ## Agreed scope
 
 - The initial storefronts are **DriveThruRPG**, **DMs Guild**, **Storytellers Vault**, and **Ulisses ebooks**.
 - The user can choose which storefronts to crawl and has a **Full recrawl** toggle. Keep configuration light.
 - Each storefront has cookie setup with two paths: **manual paste** and **import from Firefox**.
+- MongoDB and S3 are both required. Their connection settings are accessible from **Settings → Storage**, and crawling is blocked until both configurations are saved. The backend independently enforces the requirement and checks connectivity before a run.
 - During a crawl, the storefront progress view has two numeric columns: **Queued** and **Catalogued**. Do not restore the earlier Pages and Listings columns.
 - The product is called **Nekonomicon**. A catalog and wiki sources are part of the broader idea, but those screens have not been designed here.
 
@@ -22,7 +24,16 @@ The links above the mockups switch between the two references. No build step, se
 - The four storefronts appear as individually selectable cards; selection is separate from each card's cookie setup.
 - Each card presents the storefront name, last-crawl state, cookie state, and an action to manage cookies. The same dialog offers Firefox and manual import for the selected storefront.
 - The full-recrawl switch applies to the selected storefronts. The working design interpretation is that a full recrawl revisits every listing; the exact behavior of a regular crawl remains to be defined.
+- A storage status panel names each missing service and links to settings. The start button is enabled only when MongoDB and S3 are configured and at least one storefront is selected. A saved configuration is not presented as proof that the service is reachable.
 - The initial selection, cookie states, and Firefox profile shown in the mockup are examples, not requirements about defaults or authentication.
+
+## Storage settings view
+
+- MongoDB takes a connection string and database name. The implementation requires a transaction-capable replica set or sharded cluster.
+- S3 takes a bucket, region, optional prefix and optional custom S3-compatible endpoint. Credentials come from the AWS default provider chain or explicitly entered access key and secret, with an optional session token.
+- The services can be saved and tested independently. Testing is optional before the user presses **Start crawl**; the real backend performs its own preflight at start or resume, reports service failures, and starts no crawl if it cannot use the configured storage.
+- Secret fields must be protected in the actual application. The mockup stores no field values, makes no network requests and passes only simulated readiness flags between screens.
+- If storage becomes unavailable during a run, the intended behavior is to pause safely and show an actionable error; the active-run example does not yet depict that error state.
 
 ## Active crawl view
 
@@ -46,6 +57,7 @@ The links above the mockups switch between the two references. No build step, se
 - Are cookies required for each source or optional? What manual paste format and Firefox profile-selection/error states should be supported on each target platform?
 - How should queued, in-progress, completed, failed, and retried items be counted and deduplicated? Are counts scoped to a single run or the whole catalog?
 - What are the intended pause, resume, stop, and retry semantics? How much crawl history should remain available?
+- How should the storage-unavailable and recovery states appear during an active crawl? What migration flow should be offered when changing destinations for an existing catalogue?
 - How should future storefronts and wikis be represented when their requirements are known?
 
 ## Credits

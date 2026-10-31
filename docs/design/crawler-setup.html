@@ -20,7 +20,7 @@
 </head>
 <body>
   <div class="design-reference">
-    <nav class="design-nav" aria-label="Design reference views"><span>Design reference</span><a href="crawler-setup.html" aria-current="page">Crawler setup</a><a href="crawler-active.html">Active crawl</a></nav>
+    <nav class="design-nav" aria-label="Design reference views"><span>Design reference</span><a data-preview-link="crawler-setup.html" href="crawler-setup.html" aria-current="page">Crawler setup</a><a data-preview-link="crawler-active.html" href="crawler-active.html">Active crawl</a><a data-preview-link="crawler-settings.html" href="crawler-settings.html">Storage settings</a></nav>
 <div id="ttrpg-crawler-concept">
   <style>
     #ttrpg-crawler-concept {
@@ -151,6 +151,15 @@
     #ttrpg-crawler-concept .field-hint { color: var(--app-muted); font-size: 11px; margin: 8px 0 0; }
     #ttrpg-crawler-concept .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
     #ttrpg-crawler-concept .example-note { color: var(--app-muted); background: var(--app-soft); border-radius: 7px; padding: 10px; font-size: 11px; margin-top: 18px; }
+    #ttrpg-crawler-concept a.nav-item { text-decoration: none; }
+    #ttrpg-crawler-concept .storage-panel { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 13px 15px; margin: 0 0 21px; border: 1px solid light-dark(#ead7b8, #614b30); border-radius: 9px; background: light-dark(#faf0df, #40321f); }
+    #ttrpg-crawler-concept .storage-panel.ready { border-color: light-dark(#cde6d8, #345747); background: var(--app-green-soft); }
+    #ttrpg-crawler-concept .storage-copy strong { display: block; font-size: 12px; font-weight: 650; }
+    #ttrpg-crawler-concept .storage-copy p { margin: 3px 0 7px; color: var(--app-muted); font-size: 11px; }
+    #ttrpg-crawler-concept .storage-statuses { display: flex; flex-wrap: wrap; gap: 6px; }
+    #ttrpg-crawler-concept .storage-status { border-radius: 20px; padding: 3px 7px; background: light-dark(#f3e2c7, #594329); color: light-dark(#89581b, #e1b26d); font-size: 10px; font-weight: 600; }
+    #ttrpg-crawler-concept .storage-status.ready { background: light-dark(#d9eee2, #2d4e3f); color: var(--app-green); }
+    #ttrpg-crawler-concept .storage-link { text-decoration: none; }
     #ttrpg-crawler-concept [hidden] { display: none !important; }
     @media (max-width: 700px) {
       #ttrpg-crawler-concept .workspace { min-height: 0; }
@@ -182,13 +191,18 @@
         <div class="nav-caption">Workspace</div>
         <div class="nav-item active" aria-current="page"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-radar" aria-hidden="true"><path d="M19.07 4.93A10 10 0 0 0 6.99 3.34"></path><path d="M4 6h.01"></path><path d="M2.29 9.62A10 10 0 1 0 21.31 8.35"></path><path d="M16.24 7.76A6 6 0 1 0 8.23 16.67"></path><path d="M12 18h.01"></path><path d="M17.99 11.66A6 6 0 0 1 15.77 16.67"></path><circle cx="12" cy="12" r="2"></circle><path d="m13.41 10.59 5.66-5.66"></path></svg><span class="nav-text">Crawler</span></div>
         <div class="nav-item"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-book-open" aria-hidden="true"><path d="M12 7v14"></path><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"></path></svg><span class="nav-text">Catalog</span></div>
+        <a class="nav-item" data-preview-link="crawler-settings.html" href="crawler-settings.html" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M19 5l-2 2M7 17l-2 2"></path></svg><span class="nav-text">Settings</span></a>
         <div class="sidebar-foot"><strong>Local workspace</strong>Storefront sources</div>
       </aside>
       <main class="main">
         <div class="page-head">
           <div><div class="eyebrow">Sources</div><h1>Crawler</h1><p class="intro">Bring storefront listings into your catalog.</p></div>
-          <button class="action primary" type="button" id="crawl-preview"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-play" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path></svg> Start crawl <span id="button-count">· 4</span></button>
+          <button class="action primary" type="button" id="crawl-preview" aria-describedby="storage-requirement" disabled><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-play" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path></svg> Start crawl <span id="button-count">· 4</span></button>
         </div>
+        <section class="storage-panel" id="storage-panel" aria-label="Storage configuration" aria-live="polite">
+          <div class="storage-copy"><strong id="storage-title">Storage setup required</strong><p id="storage-requirement">Configure MongoDB and S3 before starting a crawl.</p><div class="storage-statuses"><span class="storage-status" id="mongo-status">MongoDB · Not configured</span><span class="storage-status" id="s3-status">S3 · Not configured</span></div></div>
+          <a class="action storage-link" data-preview-link="crawler-settings.html" href="crawler-settings.html">Configure storage</a>
+        </section>
         <section aria-labelledby="storefront-heading">
           <div class="section-heading"><div><h2 id="storefront-heading">Storefronts</h2><p id="selection-summary" aria-live="polite">4 of 4 selected for this crawl</p></div><button class="select-all" id="toggle-all" type="button">Deselect all</button></div>
           <div class="stores">
@@ -246,6 +260,10 @@
       const firefoxPane = root.querySelector('#firefox-pane');
       const pastePane = root.querySelector('#paste-pane');
       const cookieText = root.querySelector('#cookies');
+      const params = new URLSearchParams(location.search);
+      const mongoConfigured = params.get('mongo') === '1';
+      const s3Configured = params.get('s3') === '1';
+      const storageReady = mongoConfigured && s3Configured;
       let currentStore = null;
       let lastTrigger = null;
 
@@ -255,8 +273,25 @@
         summary.textContent = `${selected.length} of ${cards.length} selected for this crawl`;
         toggleAll.textContent = selected.length === cards.length ? 'Deselect all' : 'Select all';
         count.textContent = `· ${selected.length}`;
-        start.disabled = selected.length === 0;
+        start.disabled = selected.length === 0 || !storageReady;
+        root.querySelector('#storage-requirement').textContent = !storageReady
+          ? `Configure ${[!mongoConfigured && 'MongoDB', !s3Configured && 'S3'].filter(Boolean).join(' and ')} before starting a crawl.`
+          : selected.length === 0 ? 'Select at least one storefront to start a crawl.' : 'MongoDB and S3 are configured.';
       }
+      root.querySelector('#storage-panel').classList.toggle('ready', storageReady);
+      root.querySelector('#storage-title').textContent = storageReady ? 'Storage configured' : 'Storage setup required';
+      for (const [name, ready, label] of [['mongo', mongoConfigured, 'MongoDB'], ['s3', s3Configured, 'S3']]) {
+        const status = root.querySelector(`#${name}-status`);
+        status.textContent = `${label} · ${ready ? 'Configured' : 'Not configured'}`;
+        status.classList.toggle('ready', ready);
+      }
+      root.querySelector('.storage-link').textContent = storageReady ? 'Manage storage' : 'Configure storage';
+      document.querySelectorAll('[data-preview-link]').forEach(link => {
+        const url = new URL(link.dataset.previewLink, location.href);
+        url.searchParams.set('mongo', mongoConfigured ? '1' : '0');
+        url.searchParams.set('s3', s3Configured ? '1' : '0');
+        link.href = url.href;
+      });
       function setTab(method) {
         const firefox = method === 'firefox';
         firefoxTab.setAttribute('aria-selected', String(firefox));
@@ -303,6 +338,7 @@
         closeOverlay(cookieOverlay);
       });
       start.addEventListener('click', () => {
+        if (!storageReady || !cards.some(card => card.querySelector('.store-check').checked)) return;
         const selected = cards.filter(card => card.querySelector('.store-check').checked).map(card => card.dataset.store);
         root.querySelector('#run-type').textContent = root.querySelector('#full-recrawl').checked ? '· Full recrawl' : '· Regular crawl';
         const rows = root.querySelector('#example-rows');
