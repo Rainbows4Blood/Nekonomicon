@@ -48,15 +48,16 @@ type Snapshot struct {
 	CommitSeconds     float64    `json:"commitSeconds"`
 }
 type Engine struct {
-	mu                       sync.Mutex
-	store                    *store.Store
-	net                      *dtrpg.Network
-	config                   Config
-	snapshot                 Snapshot
-	cancelStarts, cancelHard context.CancelFunc
-	done                     chan struct{}
-	end                      bool
-	pending                  []store.Result
+	mu                                 sync.Mutex
+	store                              *store.Store
+	net                                *dtrpg.Network
+	config                             Config
+	snapshot                           Snapshot
+	cancelStarts, cancelHard           context.CancelFunc
+	done                               chan struct{}
+	end                                bool
+	pending                            []store.Result
+	committedProducts, committedCovers int
 }
 
 func New(s *store.Store, n *dtrpg.Network, c Config) (*Engine, error) {
@@ -101,6 +102,10 @@ func (e *Engine) SetReady(ready bool) error {
 		return errors.New("Pause the run before changing the connection")
 	}
 	e.snapshot.ConnectionReady = ready
+	if ready && e.snapshot.State == "blocked_auth" {
+		e.snapshot.State = "paused"
+		e.snapshot.Message = "Connection restored. Resume the unfinished run."
+	}
 	if e.snapshot.Run == nil {
 		if ready {
 			e.snapshot.State = "ready"
@@ -165,6 +170,8 @@ func (e *Engine) launchLocked() {
 	e.cancelStarts = cancelStarts
 	e.done = make(chan struct{})
 	e.end = false
+	e.committedProducts = 0
+	e.committedCovers = 0
 	e.snapshot.Running = true
 	e.snapshot.State = "starting"
 	run := *e.snapshot.Run
@@ -247,6 +254,7 @@ func (e *Engine) setPhase(run *store.Run, phase, state, message string) error {
 	return nil
 }
 func (e *Engine) execute(hard, starts context.Context, run store.Run) {
+	e.net.BeginRun(run.ID)
 	start := time.Now()
 	var err error
 	defer func() {
@@ -344,7 +352,7 @@ func (e *Engine) execute(hard, starts context.Context, run store.Run) {
 		if err = e.setPhase(&run, "fetch", "fetching", "Saving complete product responses to this computer."); err != nil {
 			return
 		}
-		err = e.fetch(hard, starts, run, ids, start)
+		err = e.fetch(hard, starts, run, ids, time.Now())
 		if err != nil {
 			return
 		}
@@ -363,7 +371,7 @@ func (e *Engine) execute(hard, starts context.Context, run store.Run) {
 	if err = e.setPhase(&run, "covers", "covers", "Downloading missing or changed primary covers."); err != nil {
 		return
 	}
-	err = e.covers(hard, starts, run, start)
+	err = e.covers(hard, starts, run, time.Now())
 }
 func (e *Engine) flush(runID, phase string, start time.Time) error {
 	if len(e.pending) == 0 {
@@ -377,6 +385,8 @@ func (e *Engine) flush(runID, phase string, start time.Time) error {
 	}
 	clear(e.pending)
 	e.pending = e.pending[:0]
+	e.committedProducts += v.Products
+	e.committedCovers += v.Covers
 	e.change(func(s *Snapshot) {
 		s.Catalogued += v.Added
 		s.Saved += v.Products
@@ -388,8 +398,11 @@ func (e *Engine) flush(runID, phase string, start time.Time) error {
 		}
 		s.CommitSeconds += v.Duration.Seconds()
 		elapsed := time.Since(start).Seconds()
-		s.ProductsPerSecond = float64(s.Saved) / elapsed
-		s.CoversPerSecond = float64(s.CoverSaved) / elapsed
+		if phase == "cover" || phase == "covers" {
+			s.CoversPerSecond = float64(e.committedCovers) / elapsed
+		} else {
+			s.ProductsPerSecond = float64(e.committedProducts) / elapsed
+		}
 	})
 	return nil
 }

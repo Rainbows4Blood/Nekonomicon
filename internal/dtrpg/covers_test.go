@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -49,7 +50,15 @@ func TestCoverPaths(t *testing.T) {
 			t.Errorf("unsafe path %s", s)
 		}
 	}
-	if u, e := ImageURL("23458/584455.png"); e != nil || u != CDN+"23458/584455.png" {
+	if u, e := ImageURL("23458/584455.png"); e != nil || u != CDN+"images/23458/584455.png" {
 		t.Fatal(u, e)
+	}
+}
+
+func TestLegacyJPEGContentType(t *testing.T) {
+	var b bytes.Buffer
+	_ = jpeg.Encode(&b, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil)
+	if ext, err := ImageExtension(b.Bytes(), "image/jpg"); err != nil || ext != ".jpg" {
+		t.Fatal("valid legacy MIME rejected", err)
 	}
 }

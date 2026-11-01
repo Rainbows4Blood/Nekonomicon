@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -41,13 +42,16 @@ func ImageURL(path string) (string, error) {
 			return "", bad
 		}
 	}
-	base, _ := url.Parse(CDN)
+	base, _ := url.Parse(CDN + "images/")
+	if !u.IsAbs() && strings.HasPrefix(u.Path, "images/") {
+		base, _ = url.Parse(CDN)
+	}
 	return base.ResolveReference(u).String(), nil
 }
 func ImageExtension(b []byte, contentType string) (string, error) {
 	bad := Fail("cover", "Cover response is not a complete supported image")
 	typ := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
-	if typ != "image/png" && typ != "image/jpeg" && typ != "image/gif" && typ != "image/webp" && typ != "application/octet-stream" {
+	if typ != "image/png" && typ != "image/jpeg" && typ != "image/jpg" && typ != "image/gif" && typ != "image/webp" && typ != "application/octet-stream" {
 		return "", bad
 	}
 	cfg, format, e := image.DecodeConfig(bytes.NewReader(b))
@@ -71,7 +75,7 @@ func ImageExtension(b []byte, contentType string) (string, error) {
 		}
 		return ".gif", nil
 	case "webp":
-		if len(b) < 12 {
+		if len(b) < 12 || int64(binary.LittleEndian.Uint32(b[4:8]))+8 != int64(len(b)) {
 			return "", bad
 		}
 		return ".webp", nil

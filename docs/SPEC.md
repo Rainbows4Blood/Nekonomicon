@@ -24,7 +24,7 @@ Reference implementation: Rainbows4Blood/kaijucrawl at commit f2ced97ac62f24e32a
 - API origin: https://api.drivethrurpg.com/
 - Product request: https://api.drivethrurpg.com/api/vBeta/products/{id}?groupId=1&siteId=10
 - Canonical product URL: https://www.drivethrurpg.com/en/product/{id}
-- Primary image base: https://d1vzi28wh99zvq.cloudfront.net/
+- Primary image base: https://d1vzi28wh99zvq.cloudfront.net/images/ (live-verified correction on 2026-11-01; the origin-only legacy base returns 403 for the supplied relative path).
 
 Reference files:
 

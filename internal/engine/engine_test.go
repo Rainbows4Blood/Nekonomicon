@@ -192,3 +192,45 @@ func TestAuthenticationAndIncompleteDiscovery(t *testing.T) {
 		t.Fatal("unvalidated auth resumed")
 	}
 }
+
+func TestTimerCommitsWhileAnotherRequestIsInFlight(t *testing.T) {
+	held := make(chan struct{})
+	release := make(chan struct{})
+	e, _ := setup(t, func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/vBeta/products/")
+		if id == "2" {
+			close(held)
+			<-release
+		}
+		body(w, id)
+	})
+	if err := e.Start("new", false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-held:
+	case <-time.After(3 * time.Second):
+		t.Fatal("second request did not start")
+	}
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for e.Snapshot().Catalogued != 1 {
+		select {
+		case <-deadline.C:
+			close(release)
+			t.Fatal("time threshold did not flush the first result")
+		case <-ticker.C:
+		}
+	}
+	if !e.Snapshot().Running {
+		t.Fatal("run completed while request was still in flight")
+	}
+	_ = e.Pause()
+	close(release)
+	wait(t, e)
+	if e.Snapshot().State != "paused" || e.Snapshot().Catalogued != 2 {
+		t.Fatal("pause did not settle and flush")
+	}
+}

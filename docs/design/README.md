@@ -18,4 +18,12 @@ Catalogued counts all saved products; progress counts outcomes within the curren
 
 Treat docs/SPEC.md as the behavioral authority. Use frontend state snapshots emitted by Go at no more than 4 Hz; the demo JavaScript is disposable. Avoid per-product DOM updates and loading complete JSON into the frontend. Local storage is ready by default; the data-folder chooser can be a small idle-only settings action later.
 
+The implemented Wails screen lives in `frontend/`. It uses Go snapshots at 4 Hz,
+skips unchanged snapshots, masks and clears pasted cookies, and pages persisted
+errors 50 at a time. Folder selection is implemented in Local data and requires
+ending any unfinished run first. The standalone mockup stays unchanged and does
+not import credentials or crawl. Native Windows checks covered desktop/narrow
+layouts and keyboard focus; the production renderer is tested across every run
+state. Linux light appearance was checked under WSLg with software rendering.
+
 There is intentionally no navigation to other storefronts, browsing, analysis, remote storage, or infrastructure settings. No external assets or icon package are required by this mockup.

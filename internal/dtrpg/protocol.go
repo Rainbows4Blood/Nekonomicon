@@ -80,41 +80,57 @@ func ProductID(raw string) int64 {
 	return id
 }
 
+type ProductData struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	Attributes struct {
+		ProductID int64   `json:"productId"`
+		Image     *string `json:"image"`
+	} `json:"attributes"`
+}
 type Envelope struct {
-	Data struct {
-		ID         string `json:"id"`
-		Type       string `json:"type"`
-		Attributes struct {
-			ProductID int64   `json:"productId"`
-			Image     *string `json:"image"`
-		} `json:"attributes"`
-	} `json:"data"`
+	Data ProductData `json:"data"`
+}
+
+// Presence records a field without allocating or decoding its contents.
+type presence bool
+
+func (p *presence) UnmarshalJSON(b []byte) error {
+	*p = presence(!bytes.Equal(b, []byte("null")))
+	return nil
 }
 
 func Validate(body []byte, id int64) (Envelope, error) {
 	var v Envelope
-	var top map[string]json.RawMessage
-	if json.Unmarshal(body, &top) != nil {
+	var wire struct {
+		Data        *ProductData    `json:"data"`
+		ProductID   int64           `json:"productId"`
+		Image       json.RawMessage `json:"image"`
+		PublisherID presence        `json:"publisherId"`
+		Description presence        `json:"description"`
+		Error       presence        `json:"error"`
+		Errors      presence        `json:"errors"`
+	}
+	if json.Unmarshal(body, &wire) != nil {
 		return v, Fail("schema", "Product response is not a JSON object")
 	}
-	if _, wrapped := top["data"]; !wrapped {
+	if wire.Error || wire.Errors {
+		return v, Fail("schema", "API returned an error envelope")
+	}
+	if wire.Data == nil {
 		// The live vBeta endpoint also serves a flat product object. Require its
 		// own ID and image field; never normalize the bytes used for storage.
-		var flat struct {
-			ProductID int64   `json:"productId"`
-			Image     *string `json:"image"`
-		}
-		if json.Unmarshal(body, &flat) != nil || flat.ProductID != id || id <= 0 || top["image"] == nil {
+		if wire.ProductID != id || id <= 0 || (wire.Image == nil && !wire.PublisherID && !wire.Description) {
 			return v, Fail("schema", "Response is not a matching flat product")
 		}
 		v.Data.Type = "Product"
-		v.Data.Attributes.ProductID = flat.ProductID
-		v.Data.Attributes.Image = flat.Image
+		v.Data.Attributes.ProductID = wire.ProductID
+		if wire.Image != nil && json.Unmarshal(wire.Image, &v.Data.Attributes.Image) != nil {
+			return v, Fail("schema", "Invalid primary image field")
+		}
 		return v, nil
 	}
-	if json.Unmarshal(body, &v) != nil {
-		return v, Fail("schema", "Product response is not valid JSON with the expected field types")
-	}
+	v.Data = *wire.Data
 	if v.Data.Type != "Product" {
 		return v, Fail("schema", "Response resource type is not Product")
 	}

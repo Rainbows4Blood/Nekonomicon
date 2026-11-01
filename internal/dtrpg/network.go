@@ -24,12 +24,23 @@ type policy struct {
 	next  time.Time
 }
 type Network struct {
-	Client   *http.Client
-	Attempts int
-	mu       sync.Mutex
-	cookies  auth.Cookies
-	policies map[string]*policy
-	cooldown time.Time
+	Client          *http.Client
+	Attempts        int
+	mu              sync.Mutex
+	cookies         auth.Cookies
+	policies        map[string]*policy
+	cooldown        time.Time
+	runID           string
+	productAttempts map[int64]int
+}
+
+func (n *Network) BeginRun(id string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.runID != id {
+		n.runID = id
+		n.productAttempts = map[int64]int{}
+	}
 }
 
 func NewNetwork(c auth.Cookies, transport http.RoundTripper) *Network {
@@ -117,15 +128,18 @@ func decode(b []byte, limit int) ([]byte, error) {
 	return bounded(r, limit)
 }
 func (n *Network) Get(ctx context.Context, raw string, product int64, limit int, robots, cover bool) (Response, error) {
-	return n.GetForRun(ctx, ctx, raw, product, limit, robots, cover)
+	return n.get(ctx, ctx, raw, product, limit, robots, cover, false)
 }
 
 // Starts can be cancelled to pause scheduling/retries while the current HTTP
 // request settles under ctx. This keeps pause bounded without dropping successes.
 func (n *Network) GetForRun(ctx, starts context.Context, raw string, product int64, limit int, robots, cover bool) (Response, error) {
+	return n.get(ctx, starts, raw, product, limit, robots, cover, true)
+}
+func (n *Network) get(ctx, starts context.Context, raw string, product int64, limit int, robots, cover, budget bool) (Response, error) {
 	var last error
 	for attempt := 0; attempt < n.Attempts; attempt++ {
-		r, e := n.once(ctx, starts, raw, product, limit, robots, cover)
+		r, e := n.once(ctx, starts, raw, product, limit, robots, cover, budget)
 		if e == nil {
 			return r, nil
 		}
@@ -160,7 +174,7 @@ func (n *Network) GetForRun(ctx, starts context.Context, raw string, product int
 	}
 	return Response{}, last
 }
-func (n *Network) once(ctx, starts context.Context, raw string, product int64, limit int, robots, cover bool) (Response, error) {
+func (n *Network) once(ctx, starts context.Context, raw string, product int64, limit int, robots, cover, budget bool) (Response, error) {
 	original, e := url.Parse(raw)
 	if e != nil {
 		return Response{}, Fail("schema", "Invalid URL")
@@ -197,6 +211,18 @@ func (n *Network) once(ctx, starts context.Context, raw string, product int64, l
 			if h != "" {
 				req.Header.Set("Cookie", h)
 			}
+		}
+		if budget && product > 0 && redirects == 0 {
+			n.mu.Lock()
+			if n.productAttempts == nil {
+				n.productAttempts = map[int64]int{}
+			}
+			if n.productAttempts[product] >= n.Attempts {
+				n.mu.Unlock()
+				return Response{}, Fail("attempts", "Product attempt limit reached for this run; use Retry failed after ending the run")
+			}
+			n.productAttempts[product]++
+			n.mu.Unlock()
 		}
 		resp, e := n.Client.Do(req)
 		if e != nil {

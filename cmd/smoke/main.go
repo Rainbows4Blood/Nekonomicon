@@ -179,7 +179,7 @@ func run(name string, covers bool) error {
 	}
 	fmt.Printf("Bounded smoke finished: %d sitemaps, %d byte-identical products, %d cover failures; temporary catalog and covers removed on exit. Not a full crawl.\n", len(seen), len(ids), coverFailures)
 	if coverFailures > 0 {
-		return fmt.Errorf("Product smoke passed; cover host rejected %d images", coverFailures)
+		return fmt.Errorf("Product smoke passed; %d covers failed download or validation", coverFailures)
 	}
 	return nil
 }

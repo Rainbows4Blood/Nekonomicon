@@ -1,7 +1,8 @@
 # Implementation and validation
 
-The acceptance gate in SPEC.md is not yet complete. This file records actual
-checks and limitations; the standalone HTML mockup remains illustrative.
+The DTRPG acceptance checks are complete as of 2026-11-01. This file records
+their evidence and limits; the standalone HTML mockup remains illustrative.
+The production application is the Go/Wails executable with assets in frontend/.
 
 ## Protocol and authentication
 
@@ -28,10 +29,14 @@ The current robots.txt declares no sitemaps. The user approved falling back to
 the fixed legacy /sitemap.xml entry point with robots policy still enforced and
 a visible diagnostic. A bounded live check read three sitemaps and retrieved
 products 1, 3 and 5 (22,047 / 47,984 / 39,426 bytes). Their responses survived
-temporary SQLite storage byte-for-byte; HTTP took 409 / 331 / 317 ms and commits
-1.07 / 1.06 / 1.19 ms. All three CDN requests returned 403; those were recorded
-as independent cover failures. Live cover success is not yet demonstrated.
-Temporary authenticated responses and covers are removed by the smoke command.
+temporary SQLite storage byte-for-byte; HTTP took 735 / 960 / 751 ms and commits
+1.32 / 1.02 / 0.50 ms. All three primary covers downloaded, validated, and were
+atomically installed before their metadata committed (142 / 92 / 76 ms).
+The live CDN requires the `/images/` prefix for relative paths and serves some
+valid JPEGs as `image/jpg`; both are covered by regression tests. There were no
+product or cover failures in the final sample. This was a small protocol check,
+not a full catalog crawl. Temporary authenticated responses and covers are
+removed by the smoke command.
 
 ## Storage
 
@@ -61,8 +66,8 @@ The machine has 29,840,748,544 bytes of RAM and a local NTFS C: volume. The
 controlled end-to-end benchmark (`go run ./cmd/measure -count 1000`) uses the
 same product fixture with synthetic IDs, a local HTTP server, 8 product workers,
 4 cover workers, and 14,016-byte generated PNG covers. It saved 1,000 products
-and 1,000 covers in 1.139 s: summed product HTTP 0.794 s, validation 0.321 s,
-commits 0.369 s, peak sampled Go heap 66,658,480 bytes. These summed timings
+and 1,000 covers in 1.218 s: summed product HTTP 0.941 s, validation 0.182 s,
+commits 0.363 s, peak sampled Go heap 69,793,232 bytes. These summed timings
 overlap because workers run concurrently. This includes discovery, local HTTP,
 SQLite and atomic cover files; excludes Internet latency, browser import, UI,
 and process memory outside Go's sampled heap. It is not a live crawl benchmark.
@@ -82,10 +87,12 @@ Pause cancels scheduling and retry waits while current HTTP requests settle,
 then flushes. Resume uses persisted per-product success markers, never a
 largest-ID cursor. Discovery is repeated after pause/restart. A failed commit
 retains its batch in memory; later uncommitted results are replayed on resume.
-An abrupt process exit can lose that volatile batch. End run never removes
-committed data. Same-URL cover changes and orphan-file cleanup are deferred.
+An abrupt process exit can lose that volatile batch. In-memory pauses retain
+the product attempt budget; a process restart may replay uncommitted attempts.
+End run never removes committed data. Same-URL cover changes and orphan-file
+cleanup are deferred.
 
-## Checks so far
+## Acceptance evidence
 
 Windows amd64: gofmt, go test ./..., and go vet ./... pass. Tests cover cookie
 scope, manual input, Firefox WAL import and expiry, gzip sitemap recursion and
@@ -95,11 +102,51 @@ fixture-byte storage (including included), rollback, failed refresh preservation
 out-of-order eligibility, exclusive writers, and abrupt-process batch recovery.
 Additional tests cover engine pause/settle/flush, new-product skips, restricted
 products continuing to completion, retry-failed recovery, authentication blocks,
-retained commit-error batches, and preservation of old covers after partial or
-HTML responses. Windows race instrumentation is unavailable without a C compiler;
-Linux validation is being prepared in the available Ubuntu WSL environment.
+retained commit-error batches, timer-triggered commits while other requests are
+in flight, bounded attempts across pauses, and preservation of old covers after
+partial or HTML responses. Commit failures are injected with a SQLite trigger;
+the check exercises rollback/recovery without filling the user's disk.
+
+| Acceptance requirement | Evidence |
+| --- | --- |
+| Real discovery and authenticated retrieval | Bounded live run: three sitemap-derived products and three primary covers |
+| Complete JSON preservation | Byte-for-byte fixture test including top-level `included`; live readback comparison |
+| New/refresh/retry behavior | Engine and store tests for skips, upserts, failed-refresh preservation, and retry recovery |
+| Crash and out-of-order resume | Separate process terminated inside a transaction; persisted success markers and unfinished-ID eligibility checked after reopening |
+| Failure outcomes | Local HTTP tests for restriction, missing products, invalid bodies, auth challenges, redirects, rate limits and incomplete discovery; injected commit failure |
+| Independent covers | Separate bounded pool, no product cookies sent to CDN, validated temporary files followed by rename and metadata commit |
+| Responsive and accurate UI | 4 Hz snapshots, commit-only counters, timer flush test, production renderer tests for every run state, native layout and keyboard checks |
+| Measured storage and pipeline | Reproducible temporary-database commands and measurements above |
+
+## Desktop and platform checks
+
+Windows amd64 (Go 1.27.1, Node.js 22.23.2, Wails 2.17.1): production Wails
+build, Go tests/vet, frontend syntax checks and four frontend behavior tests
+pass. The actual WebView2 window was checked at desktop and approximately
+430-pixel widths, with keyboard focus, sign-in gating, expandable controls and
+an empty cover-only run. The real renderer is also exercised for all run states
+with synthetic snapshots, including persisted failure text rendered as text.
+An opt-in Windows Credential Manager test verifies encrypted session roundtrip,
+replacement, absence of plaintext cookies, and tamper rejection using synthetic
+credentials. No live credentials are committed or used as fixtures.
+
+Ubuntu under WSL2 (Go 1.26.0, GTK 3.24.52, WebKitGTK 4.1 / 2.52.6):
+`go test -race ./internal/...`, full tests and vet with `-tags webkit2_41`, and
+the production Wails Linux build pass. The native Linux window rendered and
+was inspected through WSLg with isolated temporary configuration/data folders.
+WSLg required `LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_COMPOSITING_MODE=1` on this
+machine because the GPU device was unavailable. A real Linux Firefox session
+and Linux Secret Service persistence have not been exercised; the authenticated
+live smoke and native credential persistence test used Windows. Windows race
+instrumentation was unavailable without a C compiler; Linux race tests cover
+the shared engine, protocol, authentication and storage packages.
+
+The Wails binding generator prints a `Not found: store.Run` warning for the
+embedded snapshot's generated TypeScript metadata. The frontend uses the
+runtime JavaScript bridge directly, and the native application and renderer
+checks pass; generated TypeScript files are not shipped or consumed.
 
 The restricted execution sandbox could not resolve some Go standard-library
-packages; the same checks pass outside that sandbox. Go 1.27.1 and a downloaded
-Go 1.26.0 toolchain both passed the initial core tests. Linux desktop build and
-smoke checks have not run yet.
+packages; the checks above ran successfully outside that sandbox. No full live
+crawl was started for UI validation. Offline timing and heap measurements do
+not predict Internet throughput or total process resident memory.

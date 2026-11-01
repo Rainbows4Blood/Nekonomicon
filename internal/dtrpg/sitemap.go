@@ -127,6 +127,15 @@ func (n *Network) Discover(ctx context.Context, progress func(Discovery)) ([]int
 		}
 	}
 	seen := map[string]bool{}
+	known := map[string]bool{}
+	unique := make([]string, 0, len(queue))
+	for _, u := range queue {
+		if !known[u] {
+			known[u] = true
+			unique = append(unique, u)
+		}
+	}
+	queue = unique
 	ids := map[int64]bool{}
 	processed := 0
 	for len(queue) > 0 {
@@ -156,7 +165,11 @@ func (n *Network) Discover(ctx context.Context, progress func(Discovery)) ([]int
 				if u == "" {
 					return nil, Fail("discovery", "Sitemap index points outside approved scope")
 				}
-				if !seen[u] {
+				if !known[u] {
+					known[u] = true
+					if len(known) > 100000 {
+						return nil, Fail("discovery", "Sitemap graph exceeds safety limit")
+					}
 					queue = append(queue, u)
 				}
 			} else if id := ProductID(x.Location); id > 0 {

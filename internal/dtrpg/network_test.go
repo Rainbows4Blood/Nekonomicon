@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 type mapped struct {
@@ -145,5 +146,70 @@ func TestRedirectAndCoverCredentialIsolation(t *testing.T) {
 	}
 	if _, e := n.Get(context.Background(), CDN+"cover.png", 0, 1024, false, true); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestRateLimitAndCancellation(t *testing.T) {
+	attempts := 0
+	n := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(429)
+			return
+		}
+		fmt.Fprint(w, "ok")
+	})
+	n.Attempts = 2
+	start := time.Now()
+	if _, e := n.Get(context.Background(), CDN+"image.png", 0, 1024, false, true); e != nil {
+		t.Fatal(e)
+	}
+	if attempts != 2 || time.Since(start) < time.Second {
+		t.Fatal("Retry-After was ignored")
+	}
+	n = fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(429)
+	})
+	n.Attempts = 3
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start = time.Now()
+	if _, e := n.Get(ctx, CDN+"image.png", 0, 1024, false, true); e == nil || time.Since(start) > time.Second {
+		t.Fatal("retry wait did not cancel")
+	}
+}
+
+func TestFallbackStillEnforcesRobotsAndIncompleteDiscovery(t *testing.T) {
+	for _, blocked := range []bool{true, false} {
+		n := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/robots.txt" {
+				if blocked {
+					fmt.Fprint(w, "User-agent: *\nDisallow: /sitemap.xml\n")
+				} else {
+					fmt.Fprint(w, "User-agent: *\nAllow: /\n")
+				}
+				return
+			}
+			fmt.Fprint(w, `<urlset><url><loc>https://www.drivethrurpg.com/product/1</loc></url>`)
+		})
+		var fallback bool
+		if ids, e := n.Discover(context.Background(), func(v Discovery) { fallback = v.Fallback }); e == nil || len(ids) != 0 || !fallback {
+			t.Fatal("fallback bypassed robots or incomplete XML was accepted")
+		}
+	}
+}
+
+func TestFlatAndErrorEnvelopes(t *testing.T) {
+	for _, body := range []string{`{"productId":7,"image":null,"unknown":true}`, `{"productId":7,"publisherId":1}`} {
+		if _, err := Validate([]byte(body), 7); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, body := range []string{`{"productId":7}`, `{"productId":8,"image":null}`, `{"productId":7,"image":null,"errors":[]}`, `{"data":{"type":"Product","attributes":{"productId":7}},"error":"failure"}`} {
+		if _, err := Validate([]byte(body), 7); err == nil {
+			t.Fatal("invalid envelope accepted")
+		}
 	}
 }
