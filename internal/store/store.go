@@ -276,8 +276,13 @@ func (s *Store) Commit(ctx context.Context, runID string, batch []Result) (Commi
 	v.Duration = time.Since(start)
 	return v, nil
 }
+
+// Constrain the leading key as well as the cursor so SQLite can seek directly
+// into (source, product_id), without scanning and sorting the whole catalog.
+const coverPageQuery = `SELECT p.product_id,p.response_json,coalesce(c.source_url,''),coalesce(c.relative_path,'') FROM products p LEFT JOIN covers c USING(source,product_id) WHERE p.source='dtrpg' AND p.product_id>? ORDER BY p.product_id LIMIT 256`
+
 func (s *Store) CoverPage(after int64) ([]CoverRow, error) {
-	rows, e := s.db.Query(`SELECT p.product_id,p.response_json,coalesce(c.source_url,''),coalesce(c.relative_path,'') FROM products p LEFT JOIN covers c USING(source,product_id) WHERE p.product_id>? ORDER BY p.product_id LIMIT 256`, after)
+	rows, e := s.db.Query(coverPageQuery, after)
 	if e != nil {
 		return nil, e
 	}

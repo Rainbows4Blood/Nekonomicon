@@ -74,6 +74,13 @@ and process memory outside Go's sampled heap. It is not a live crawl benchmark.
 
 ## Pipeline and bounds
 
+Cover pagination uses a range seek on the existing `(source, product_id)` primary
+key. A 2026-11-01 audit found that omitting the fixed source predicate made SQLite
+scan the product index and sort it again for each page on a large catalog. The
+query now constrains both source and the product-ID cursor. A regression test
+checks page boundaries, joined cover metadata, and an indexed plan without a
+temporary sort. This requires no schema migration or catalog rewrite.
+
 Three sequential phases run in a UI-independent coordinator. Workers return
 results through unbuffered channels; only the coordinator calls the writer.
 Batches flush at 1,000 outcomes, 32 MiB, or 2 seconds from the first result.

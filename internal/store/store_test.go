@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,64 @@ func TestLosslessRollbackAndRecovery(t *testing.T) {
 		t.Fatalf("new mode: %v %v", ids, e)
 	}
 }
+func TestCoverPagesSeekBySourceAndProductID(t *testing.T) {
+	s := openTest(t)
+	r := runTest(t, s, "covers")
+	var batch []Result
+	for id := int64(1); id <= 600; id++ {
+		batch = append(batch, Result{ID: id, JSON: []byte(fmt.Sprintf(`{"productId":%d,"image":null}`, id))})
+	}
+	if _, err := s.Commit(context.Background(), r.ID, batch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Commit(context.Background(), r.ID, []Result{{ID: 513, Cover: &Cover{URL: "synthetic", Path: "covers/synthetic.png"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var after int64
+	for _, count := range []int{256, 256, 88, 0} {
+		page, err := s.CoverPage(after)
+		if err != nil || len(page) != count {
+			t.Fatalf("page after %d: count=%d error=%v", after, len(page), err)
+		}
+		for _, row := range page {
+			if row.ID != after+1 || !bytes.Contains(row.JSON, []byte(fmt.Sprintf(`"productId":%d,`, row.ID))) {
+				t.Fatal("page skipped, duplicated, reordered, or mismatched a product")
+			}
+			if row.ID == 513 && (row.URL != "synthetic" || row.Path != "covers/synthetic.png") {
+				t.Fatal("existing cover metadata lost in page join")
+			}
+			after = row.ID
+		}
+	}
+	// A page must be a range seek, not a scan/sort repeated for every 256 rows.
+	// The latter became very slow on a 347,310-record catalog.
+	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+coverPageQuery, 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seek := false
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err = rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(detail, "SEARCH p ") {
+			seek = true
+		}
+		if strings.HasPrefix(detail, "SCAN p") || strings.Contains(detail, "TEMP B-TREE") {
+			t.Fatalf("cover pagination scans or sorts the catalog: %s", detail)
+		}
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !seek {
+		t.Fatal("cover pagination did not use an indexed range seek")
+	}
+}
+
 func TestSingleWriterAndActiveRun(t *testing.T) {
 	s := openTest(t)
 	runTest(t, s, "one")
