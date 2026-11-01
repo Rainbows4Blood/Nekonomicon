@@ -82,7 +82,7 @@ func (n *Network) pace(ctx context.Context, u *url.URL, robots, cover bool) erro
 			}
 			if !p.group.Test(u.RequestURI()) {
 				n.mu.Unlock()
-				return Fail("policy", "Request excluded by robots policy")
+				return Fail("robots", "Request excluded by robots policy")
 			}
 			if p.next.After(due) {
 				due = p.next

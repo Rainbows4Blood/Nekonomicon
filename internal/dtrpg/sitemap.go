@@ -110,82 +110,109 @@ func ParseSitemap(b []byte, limit int) ([]Entry, error) {
 type Discovery struct {
 	Found, Sitemaps int
 	Fallback        bool
+	Skipped         int
 }
 
-// Discover completes the full sitemap graph before returning IDs. Interrupted
-// discovery is repeated on resume; partial results can never become a crawl.
+// DiscoveryState retains only IDs and the sitemap frontier, never response bodies.
+// One run coordinator owns it; a new run must use a fresh state.
+type DiscoveryState struct {
+	initialized bool
+	queue       []string
+	known       map[string]bool
+	ids         map[int64]bool
+	processed   int
+	skipped     int
+	fallback    bool
+}
+
+// Discover completes the permitted sitemap graph before returning IDs.
 func (n *Network) Discover(ctx context.Context, progress func(Discovery)) ([]int64, error) {
-	queue, e := n.Robots(ctx)
+	return n.DiscoverWithState(ctx, &DiscoveryState{}, progress)
+}
+
+// DiscoverWithState continues unfinished discovery in the same process. Failed
+// or cancelled maps stay at the front; completed and robots-excluded maps do not.
+// Robots rules are refreshed on each call, including after a connection change.
+func (n *Network) DiscoverWithState(ctx context.Context, state *DiscoveryState, progress func(Discovery)) ([]int64, error) {
+	report := func() {
+		if progress != nil {
+			progress(Discovery{Found: len(state.ids), Sitemaps: state.processed, Fallback: state.fallback, Skipped: state.skipped})
+		}
+	}
+	report()
+	roots, e := n.Robots(ctx)
 	if e != nil {
 		return nil, e
 	}
-	fallback := len(queue) == 0
-	if fallback {
-		queue = []string{auth.Website + "sitemap.xml"}
-		if progress != nil {
-			progress(Discovery{Fallback: true})
+	if !state.initialized {
+		state.fallback = len(roots) == 0
+		if state.fallback {
+			roots = []string{auth.Website + "sitemap.xml"}
 		}
-	}
-	seen := map[string]bool{}
-	known := map[string]bool{}
-	unique := make([]string, 0, len(queue))
-	for _, u := range queue {
-		if !known[u] {
-			known[u] = true
-			unique = append(unique, u)
+		state.known = map[string]bool{}
+		state.ids = map[int64]bool{}
+		for _, u := range roots {
+			if !state.known[u] {
+				state.known[u] = true
+				state.queue = append(state.queue, u)
+			}
 		}
+		state.initialized = true
 	}
-	queue = unique
-	ids := map[int64]bool{}
-	processed := 0
-	for len(queue) > 0 {
+	report()
+	for len(state.queue) > 0 {
 		if e = ctx.Err(); e != nil {
 			return nil, e
 		}
-		raw := queue[0]
-		queue = queue[1:]
-		if seen[raw] {
-			continue
-		}
-		seen[raw] = true
-		if len(seen) > 100000 {
+		if len(state.known) > 100000 {
 			return nil, Fail("discovery", "Sitemap graph exceeds safety limit")
 		}
+		raw := state.queue[0]
 		r, e := n.Get(ctx, raw, 0, SitemapLimit, false, false)
 		if e != nil {
+			if FailureOf(e).Kind == "robots" {
+				state.queue = state.queue[1:]
+				state.skipped++
+				report()
+				continue
+			}
 			return nil, e
 		}
 		entries, e := ParseSitemap(r.Body, SitemapLimit)
 		if e != nil {
 			return nil, e
 		}
+		// Validate all child URLs before changing the retained frontier.
+		var children []string
 		for _, x := range entries {
 			if x.Sitemap {
 				u := SitemapURL(x.Location)
 				if u == "" {
 					return nil, Fail("discovery", "Sitemap index points outside approved scope")
 				}
-				if !known[u] {
-					known[u] = true
-					if len(known) > 100000 {
-						return nil, Fail("discovery", "Sitemap graph exceeds safety limit")
-					}
-					queue = append(queue, u)
-				}
+				children = append(children, u)
 			} else if id := ProductID(x.Location); id > 0 {
-				ids[id] = true
+				state.ids[id] = true
 			}
 		}
-		processed++
-		if progress != nil {
-			progress(Discovery{Found: len(ids), Sitemaps: processed, Fallback: fallback})
+		for _, u := range children {
+			if !state.known[u] {
+				if len(state.known) >= 100000 {
+					return nil, Fail("discovery", "Sitemap graph exceeds safety limit")
+				}
+				state.known[u] = true
+				state.queue = append(state.queue, u)
+			}
 		}
+		state.queue = state.queue[1:]
+		state.processed++
+		report()
 	}
-	if len(ids) == 0 {
-		return nil, Fail("discovery", "Sitemaps contained no product IDs")
+	if len(state.ids) == 0 {
+		return nil, Fail("discovery", "Permitted sitemaps contained no product IDs")
 	}
-	out := make([]int64, 0, len(ids))
-	for id := range ids {
+	out := make([]int64, 0, len(state.ids))
+	for id := range state.ids {
 		out = append(out, id)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })

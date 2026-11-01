@@ -61,6 +61,8 @@ function render(s) {
   else $("progress").value = p.value || 0;
   text("status", s.message || "");
   $("fallback").hidden = !s.sitemapFallback;
+  $("sitemapSkipped").hidden = !s.sitemapsSkipped;
+  text("sitemapSkipped", `${Number(s.sitemapsSkipped || 0).toLocaleString()} sitemap${s.sitemapsSkipped === 1 ? "" : "s"} skipped by the site's robots policy.`);
   $("speed").textContent =
     s.running && s.phase === "fetch"
       ? `${Number(s.productsPerSecond || 0).toFixed(1)} committed products / second`

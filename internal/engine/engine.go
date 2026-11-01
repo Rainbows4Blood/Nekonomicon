@@ -23,6 +23,7 @@ func DefaultConfig() Config { return Config{8, 4, 1000, 32 << 20, 2 * time.Secon
 
 type Snapshot struct {
 	SitemapFallback   bool       `json:"sitemapFallback"`
+	SitemapsSkipped   int        `json:"sitemapsSkipped"`
 	State             string     `json:"state"`
 	Phase             string     `json:"phase"`
 	Message           string     `json:"message"`
@@ -57,6 +58,7 @@ type Engine struct {
 	done                               chan struct{}
 	end                                bool
 	pending                            []store.Result
+	discovery                          *dtrpg.DiscoveryState
 	committedProducts, committedCovers int
 }
 
@@ -208,6 +210,7 @@ func (e *Engine) End() error {
 		return errors.New("Cannot finish the run; check local storage")
 	}
 	e.snapshot.Run = nil
+	e.discovery = nil
 	e.snapshot.State = "ready"
 	if !e.snapshot.ConnectionReady {
 		e.snapshot.State = "setup"
@@ -301,6 +304,7 @@ func (e *Engine) execute(hard, starts context.Context, run store.Run) {
 		e.snapshot.CoversPerSecond = 0
 		if finished {
 			e.snapshot.Run = nil
+			e.discovery = nil
 		} else {
 			run.State = state
 			e.snapshot.Run = &run
@@ -321,8 +325,16 @@ func (e *Engine) execute(hard, starts context.Context, run store.Run) {
 			if err = e.setPhase(&run, "discover", "discovering", "Reading declared sitemaps; total is not yet known."); err != nil {
 				return
 			}
-			ids, err = e.net.Discover(starts, func(v dtrpg.Discovery) {
-				e.change(func(s *Snapshot) { s.Found = v.Found; s.Sitemaps = v.Sitemaps; s.SitemapFallback = v.Fallback })
+			if e.discovery == nil {
+				e.discovery = &dtrpg.DiscoveryState{}
+			}
+			ids, err = e.net.DiscoverWithState(starts, e.discovery, func(v dtrpg.Discovery) {
+				e.change(func(s *Snapshot) {
+					s.Found = v.Found
+					s.Sitemaps = v.Sitemaps
+					s.SitemapFallback = v.Fallback
+					s.SitemapsSkipped = v.Skipped
+				})
 			})
 			if err != nil {
 				return

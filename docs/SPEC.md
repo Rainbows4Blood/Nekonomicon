@@ -42,9 +42,9 @@ Load robots.txt for website and API origins, preserving existing policy and head
 
 Maintain visited sitemap URLs and a deduplicated set of positive product IDs. Accept modern /product/{id}, localized /en/product/{id}, and legacy /product_info.php?products_id={id} forms supported by the old adapter. Language/slug variants resolve to one ID. Reject unrelated hosts and non-product URLs. Preserve optional lastmod as a hint only; v1 does not depend on it to skip updates.
 
-Sitemap failure after bounded retries makes discovery incomplete. Show the failure and offer retry; do not silently proceed as a complete crawl. An unavailable declared/fallback sitemap or zero IDs is a visible diagnostic, not an automatic successful empty crawl. Never delete saved products because a sitemap omits them. Do not add listing pagination or numeric-ID guessing.
+Robots-excluded sitemap URLs are skipped without sending a request, with a visible skipped count; they do not pause the crawl. This behavior was clarified on 2026-11-01. Download or parsing failure after bounded retries still makes discovery incomplete: show the failure and offer retry. Zero IDs from the permitted sitemaps is a visible diagnostic, not an automatic successful empty crawl. Never delete saved products because a sitemap omits them. Do not add listing pagination or numeric-ID guessing.
 
-A fresh process may rediscover sitemaps rather than persist an exact frontier. In-memory pause can retain the frontier. The discovered total is a snapshot and does not prove that all existing/private products are listed.
+A fresh process may rediscover sitemaps rather than persist an exact frontier. Within the same process, retain discovered IDs and the unfinished sitemap frontier for Resume, refreshing robots policy first. The discovered total is a snapshot and does not prove that all existing/private products are listed.
 
 ## 5. Modes and recovery
 

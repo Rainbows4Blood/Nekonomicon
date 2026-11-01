@@ -32,6 +32,11 @@ test("actual renderer handles all run states and committed progress", async () =
     if (state === "pausing") assert.equal($("primary").disabled, true);
     if (state === "fetching") assert.match($("count").textContent, /4 \/ 10 saved this run · 1 failed/);
   }
+  event({ ...initial, state: "fetching", phase: "fetch", running: true, sitemapsSkipped: 1 });
+  assert.equal($("sitemapSkipped").hidden, false);
+  assert.equal($("sitemapSkipped").textContent, "1 sitemap skipped by the site's robots policy.");
+  event({ ...initial, sitemapsSkipped: 0 });
+  assert.equal($("sitemapSkipped").hidden, true);
   rows = [{ id: 7, phase: "product", kind: "schema", status: 200, message: "<img src=x onerror=alert(1)>" }];
   $("activity").open = true;
   await $("reloadErrors").onclick();

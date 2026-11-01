@@ -26,4 +26,8 @@ not import credentials or crawl. Native Windows checks covered desktop/narrow
 layouts and keyboard focus; the production renderer is tested across every run
 state. Linux light appearance was checked under WSLg with software rendering.
 
+Robots exclusions appear as a quiet skipped-sitemap count that remains visible
+during fetching. They do not pause a run. Discovery progress is retained across
+pause/resume while the process stays open; reopening the app rediscovers it.
+
 There is intentionally no navigation to other storefronts, browsing, analysis, remote storage, or infrastructure settings. No external assets or icon package are required by this mockup.

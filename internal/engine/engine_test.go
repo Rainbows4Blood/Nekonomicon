@@ -32,7 +32,7 @@ func (m redirectTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 func setup(t *testing.T, handler http.HandlerFunc) (*Engine, *store.Store) {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return setupRoutes(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/robots.txt":
 			fmt.Fprint(w, "User-agent: *\nAllow: /\nSitemap: https://www.drivethrurpg.com/sitemap.xml\n")
@@ -41,7 +41,11 @@ func setup(t *testing.T, handler http.HandlerFunc) (*Engine, *store.Store) {
 		default:
 			handler(w, r)
 		}
-	}))
+	})
+}
+func setupRoutes(t *testing.T, handler http.HandlerFunc) (*Engine, *store.Store) {
+	t.Helper()
+	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	u, _ := url.Parse(server.URL)
 	n := dtrpg.NewNetwork(auth.Cookies{}, redirectTransport{u, server.Client().Transport})
@@ -60,6 +64,66 @@ func setup(t *testing.T, handler http.HandlerFunc) (*Engine, *store.Store) {
 	e.SetReady(true)
 	t.Cleanup(func() { e.Shutdown(); s.Close() })
 	return e, s
+}
+
+func TestDiscoverySkipsRobotsAndResumeKeepsProgress(t *testing.T) {
+	var roots, first, tail, products atomic.Int32
+	held := make(chan struct{})
+	e, _ := setupRoutes(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/robots.txt":
+			fmt.Fprint(w, "User-agent: *\nDisallow: /publish\n")
+		case "/sitemap.xml":
+			roots.Add(1)
+			fmt.Fprint(w, `<sitemapindex><sitemap><loc>https://www.drivethrurpg.com/first.xml</loc></sitemap><sitemap><loc>https://www.drivethrurpg.com/publishers_sitemap.xml</loc></sitemap><sitemap><loc>https://www.drivethrurpg.com/tail.xml</loc></sitemap></sitemapindex>`)
+		case "/first.xml":
+			first.Add(1)
+			fmt.Fprint(w, `<urlset><url><loc>https://www.drivethrurpg.com/product/1</loc></url></urlset>`)
+		case "/publishers_sitemap.xml":
+			t.Error("robots exclusion reached server")
+		case "/tail.xml":
+			if tail.Add(1) == 1 {
+				close(held)
+				<-r.Context().Done()
+				return
+			}
+			fmt.Fprint(w, `<urlset><url><loc>https://www.drivethrurpg.com/product/2</loc></url></urlset>`)
+		default:
+			products.Add(1)
+			body(w, strings.TrimPrefix(r.URL.Path, "/api/vBeta/products/"))
+		}
+	})
+	if err := e.Start("new", false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-held:
+	case <-time.After(3 * time.Second):
+		t.Fatal("discovery stopped at robots exclusion")
+	}
+	if err := e.Pause(); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, e)
+	v := e.Snapshot()
+	if v.State != "paused" || v.Found != 1 || v.SitemapsSkipped != 1 || products.Load() != 0 {
+		t.Fatalf("partial discovery outcome: %+v", v)
+	}
+	if err := e.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, e)
+	v = e.Snapshot()
+	if v.State != "completed" || v.Catalogued != 2 || v.SitemapsSkipped != 1 || roots.Load() != 1 || first.Load() != 1 || tail.Load() != 2 {
+		t.Fatalf("resume repeated discovery or failed to fetch: %+v, requests=%d/%d/%d", v, roots.Load(), first.Load(), tail.Load())
+	}
+	if err := e.Start("new", false); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, e)
+	if roots.Load() != 2 || first.Load() != 2 || products.Load() != 2 {
+		t.Fatal("new run reused old discovery or refetched saved products")
+	}
 }
 func wait(t *testing.T, e *Engine) {
 	t.Helper()

@@ -25,7 +25,9 @@ the real website and a product request before enabling product crawling.
 
 Choose New products, Refresh all, or Retry failed, then Start. Pause waits for
 current requests and commits received results. Resume continues the same run;
-End run keeps committed data. Download covers also works independently without
+End run keeps committed data. Resume retains discovery progress while the app
+stays open; restarting the app rediscovers the sitemap set. Robots-excluded
+sitemaps are skipped with a visible count. Download covers also works independently without
 product cookies. Local data contains an idle-only folder chooser; changing the
 folder opens that catalog without moving existing files.
 

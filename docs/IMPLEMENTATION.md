@@ -85,7 +85,8 @@ Cover pages stop at 256 records or approximately 32 MiB (plus one record).
 
 Pause cancels scheduling and retry waits while current HTTP requests settle,
 then flushes. Resume uses persisted per-product success markers, never a
-largest-ID cursor. Discovery is repeated after pause/restart. A failed commit
+largest-ID cursor. In-memory resume retains discovered IDs and the unfinished
+sitemap frontier; process restart repeats discovery. A failed commit
 retains its batch in memory; later uncommitted results are replayed on resume.
 An abrupt process exit can lose that volatile batch. In-memory pauses retain
 the product attempt budget; a process restart may replay uncommitted attempts.
@@ -93,6 +94,16 @@ End run never removes committed data. Same-URL cover changes and orphan-file
 cleanup are deferred.
 
 ## Acceptance evidence
+
+Discovery regression fixed on 2026-11-01: the live root includes
+`/publishers_sitemap.xml`, which matches robots' `Disallow: /publish` prefix.
+The earlier bounded product smoke did not reach that late index entry. Such
+exclusions now skip only that sitemap, without requesting it or pausing the
+run. The UI reports their count. Other download/parsing failures still stop
+incomplete discovery. A bounded diagnostic read only robots and the root index;
+local HTTP regression tests reproduce the exclusion, continue through remaining
+sitemaps into product fetching, and verify pause/resume does not refetch completed
+maps. A new run gets a fresh frontier; a restarted process rediscovers as before.
 
 Windows amd64: gofmt, go test ./..., and go vet ./... pass. Tests cover cookie
 scope, manual input, Firefox WAL import and expiry, gzip sitemap recursion and
