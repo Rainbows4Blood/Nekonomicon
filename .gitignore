@@ -1,0 +1,14 @@
+/build/bin/
+/frontend/dist/
+/frontend/node_modules/
+/frontend/wailsjs/
+/.tools/
+/.tmp/
+*.exe
+*.sqlite*
+*.db*
+/covers/
+*.test
+*.out
+credentials*
+cookies*

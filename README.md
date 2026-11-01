@@ -2,7 +2,7 @@
 
 A small, fast local book crawler built with Go and Wails. **DriveThruRPG must work end to end before any other storefront is implemented.**
 
-This repository is a fresh design handoff, not an implemented application.
+Implementation is underway. The Go core currently provides scoped Firefox/manual authentication, bounded HTTP and sitemap discovery, and a transactional SQLite catalog. The desktop application and recovery pipeline are being added. See [implementation and validation notes](docs/IMPLEMENTATION.md) for the acceptance status.
 
 - [Implementation specification](docs/SPEC.md): scope, storage, pipeline, recovery, authentication, and acceptance criteria.
 - [Interactive desktop mockup](docs/design/crawler.html): download/open this file in a browser; no server, dependencies, credentials, or network required. GitHub displays its source rather than running it.
@@ -19,6 +19,14 @@ DMs Guild, Storytellers Vault, Ulisses eBooks, network databases, S3, classifica
 ## First implementation milestone
 
 Prove authenticated DTRPG sitemap discovery and API fetching into SQLite before wiring up the full UI. Measure fetch, decode, and commit time separately. Then add recovery, covers, and Wails integration. See the spec for the completion gate.
+
+## Development
+
+Go 1.26 or newer is required. Run `go test ./...` and `go vet ./...`.
+The opt-in `go run ./cmd/smoke -live -profile NAME` command reads only DTRPG
+cookies from the named Firefox profile's default container and checks a bounded
+sample (at most eight sitemaps and three discovered products, plus a connection
+probe). It prints no cookies or response dumps. It does not perform a full crawl.
 
 ## Repository reset
 
