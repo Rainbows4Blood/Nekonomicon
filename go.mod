@@ -10,6 +10,7 @@ require (
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/image v0.41.0
 	golang.org/x/net v0.60.0
+	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.61.1
 )
 
@@ -44,7 +45,6 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

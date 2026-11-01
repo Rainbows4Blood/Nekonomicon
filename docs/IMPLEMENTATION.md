@@ -40,6 +40,14 @@ removed by the smoke command.
 
 ## Storage
 
+Windows packaged-app redirection is resolved using an opened catalog handle and
+`GetFinalPathNameByHandleW`. A logical `%LOCALAPPDATA%` path can otherwise point
+at different files from packaged and ordinary desktop processes. The store uses
+the physical parent directory for its lock and covers and exposes that directory
+to the UI. No data is moved or merged. Reopening that explicit path retains the
+same catalog and unfinished run. The regression test checks file identity,
+exclusive locking across the two paths, and saved bytes/run recovery.
+
 SQLite uses WAL, synchronous=NORMAL, foreign keys and a 5-second busy timeout.
 All writes pass through the serialized Store owner, using prepared statements
 inside short transactions. Product bytes and their run marker commit together;

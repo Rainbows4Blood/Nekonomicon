@@ -35,6 +35,9 @@ Defaults: `%LOCALAPPDATA%\Nekonomicon` on Windows;
 `$XDG_DATA_HOME/nekonomicon` or `~/.local/share/nekonomicon` on Linux.
 The database is `catalog.sqlite`; saved cover images are under
 `covers/dtrpg/<product_id>/` inside that data folder.
+On Windows, launching from a packaged application can redirect AppData into
+that application's private storage. **Local data** displays the resolved
+physical folder, which is the path to use in Explorer or the folder chooser.
 Encrypted cookies live separately in the configuration directory, with the key
 in Windows Credential Manager or Linux Secret Service. Do not commit or share
 catalogs, cover folders, or credential files from authenticated sessions.

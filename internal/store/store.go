@@ -76,12 +76,28 @@ func Open(dir string) (*Store, error) {
 	if e = os.MkdirAll(dir, 0700); e != nil {
 		return nil, e
 	}
+	// Windows can redirect AppData for a process launched by a packaged app.
+	// Resolve an actual catalog handle, not just the apparent directory name,
+	// so the lock, cover files and displayed path refer to the same real folder.
+	catalog, e := os.OpenFile(filepath.Join(dir, "catalog.sqlite"), os.O_CREATE|os.O_RDWR, 0600)
+	if e != nil {
+		return nil, e
+	}
+	catalogPath, pathErr := physicalFilePath(catalog)
+	closeErr := catalog.Close()
+	if pathErr != nil {
+		return nil, pathErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	dir = filepath.Dir(catalogPath)
 	lock := flock.New(filepath.Join(dir, "writer.lock"))
 	ok, e := lock.TryLock()
 	if e != nil || !ok {
 		return nil, errors.New("Data folder is already in use or cannot be locked")
 	}
-	db, e := sql.Open("sqlite", filepath.Join(dir, "catalog.sqlite"))
+	db, e := sql.Open("sqlite", catalogPath)
 	if e != nil {
 		lock.Close()
 		return nil, e

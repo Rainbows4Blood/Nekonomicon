@@ -142,6 +142,54 @@ func TestSingleWriterAndActiveRun(t *testing.T) {
 		t.Fatal("second run opened")
 	}
 }
+
+func TestPhysicalCatalogPathCanBeReopened(t *testing.T) {
+	logicalDir := t.TempDir()
+	s, err := Open(logicalDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if s != nil {
+			s.Close()
+		}
+	}()
+	r := runTest(t, s, "physical-path")
+	response := []byte(`{"productId":42,"image":null}`)
+	if _, err = s.Commit(context.Background(), r.ID, []Result{{ID: 42, JSON: response}}); err != nil {
+		t.Fatal(err)
+	}
+	physicalDir := s.Dir
+	logicalFile, err := os.Stat(filepath.Join(logicalDir, "catalog.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	physicalFile, err := os.Stat(filepath.Join(physicalDir, "catalog.sqlite"))
+	if err != nil || !os.SameFile(logicalFile, physicalFile) {
+		t.Fatalf("reported folder does not contain the opened catalog: %v", err)
+	}
+	if other, err := Open(physicalDir); err == nil {
+		other.Close()
+		t.Fatal("physical path bypassed the writer lock")
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = nil
+	reopened, err := Open(physicalDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	got, err := reopened.Response(42)
+	if err != nil || !bytes.Equal(got, response) {
+		t.Fatalf("reopening the reported folder lost data: %v", err)
+	}
+	active, err := reopened.Active()
+	if err != nil || active == nil || active.ID != r.ID {
+		t.Fatal("reopening the reported folder lost the unfinished run")
+	}
+}
 func TestCrashRecovery(t *testing.T) {
 	if dir := os.Getenv("NEKONOMICON_CRASH_TEST"); dir != "" {
 		s, e := Open(dir)
