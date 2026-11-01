@@ -38,11 +38,11 @@ These are behavioral references, not a requirement to copy the old queue/storage
 
 ## 4. Discovery
 
-Load robots.txt for website and API origins, preserving existing policy and header behavior. Extract declared Sitemap URLs. Follow sitemapindex entries recursively; parse urlset product entries. Support plain XML, namespaces, escaped URLs, and gzip. Ignore extension entries such as image:loc. Validate XML completeness and enforce decoded-size limits.
+Load robots.txt for website and API origins, preserving existing policy and header behavior. Extract declared Sitemap URLs. If there are no approved declarations, use the fixed, verified https://www.drivethrurpg.com/sitemap.xml entry point and visibly report this fallback. This exception was approved on 2026-11-01 after the live robots response omitted sitemap declarations and the legacy root yielded matching products. Robots rules still apply; do not guess other roots. Follow sitemapindex entries recursively; parse urlset product entries. Support plain XML, namespaces, escaped URLs, and gzip. Ignore extension entries such as image:loc. Validate XML completeness and enforce decoded-size limits.
 
 Maintain visited sitemap URLs and a deduplicated set of positive product IDs. Accept modern /product/{id}, localized /en/product/{id}, and legacy /product_info.php?products_id={id} forms supported by the old adapter. Language/slug variants resolve to one ID. Reject unrelated hosts and non-product URLs. Preserve optional lastmod as a hint only; v1 does not depend on it to skip updates.
 
-Sitemap failure after bounded retries makes discovery incomplete. Show the failure and offer retry; do not silently proceed as a complete crawl. No sitemaps or zero IDs is a visible diagnostic, not an automatic successful empty crawl. Never delete saved products because a sitemap omits them. Do not add listing pagination or numeric-ID guessing.
+Sitemap failure after bounded retries makes discovery incomplete. Show the failure and offer retry; do not silently proceed as a complete crawl. An unavailable declared/fallback sitemap or zero IDs is a visible diagnostic, not an automatic successful empty crawl. Never delete saved products because a sitemap omits them. Do not add listing pagination or numeric-ID guessing.
 
 A fresh process may rediscover sitemaps rather than persist an exact frontier. In-memory pause can retain the frontier. The discovered total is a snapshot and does not prove that all existing/private products are listed.
 
@@ -84,7 +84,7 @@ Database and runtime files live under an OS-appropriate application data directo
 
 Use one reused HTTP client/transport with bounded concurrency, timeouts, connection reuse, and context cancellation. Initial product concurrency: 8; keep it configurable internally/under advanced settings and tune from measurement. Bound channels and response bodies. Initial body limit: 16 MiB decoded; exceeding it records a clear failure rather than truncating JSON. Initial sitemap decoded limit: 64 MiB. Bound total in-flight and pending-write memory as well as batch size.
 
-For each ID, request the direct API endpoint. Decode a small typed envelope to check that the response is a product, the product ID matches, and image information can be read. Preserve the complete original response body. Do not treat arbitrary HTTP 200 JSON, an error object, HTML challenge, or an empty payload as a saved product. Unknown additional product fields remain acceptable.
+For each ID, request the direct API endpoint. Decode a small typed envelope to check that the response is a product, the product ID matches, and image information can be read. Accept the supplied JSON:API shape (data.type=Product and data.attributes.productId/image) and the verified live flat shape (top-level productId and image). Support for both was approved on 2026-11-01. Preserve the complete original response body. Do not treat arbitrary HTTP 200 JSON, an error object, HTML challenge, or an empty payload as a saved product. Unknown additional product fields remain acceptable.
 
 At most 3 attempts per item per run by default. Retry timeouts and transient server failures with exponential backoff and jitter. Respect Retry-After and server rate limits. Record exhausted failures and continue other items. Confirmed authentication/session failure or challenge pauses the source and prompts reimport/Test connection. A single product restriction (including legacy product-specific 403 behavior) is an item outcome, not automatic proof that the session expired. Missing/removed products remain failures/outcomes; retain any prior good record.
 
@@ -98,7 +98,7 @@ Test connection must exercise the real website/API request path and classify fai
 
 ## 9. Covers
 
-After product fetching completes and writes flush, scan saved JSON in bounded pages and extract data.attributes.image. Join the relative image path to the verified CDN base. Download one primary cover per product; ignore thumbnails, embedded description images, previews, and PDFs. Missing/null image means no cover available, not a failed product.
+After product fetching completes and writes flush, scan saved JSON in bounded pages and extract data.attributes.image (or top-level image in verified flat responses). Join the relative image path to the verified CDN base. Download one primary cover per product; ignore thumbnails, embedded description images, previews, and PDFs. Missing/null image means no cover available, not a failed product.
 
 Use a separate bounded pool, initially 4 workers, and local deterministic paths such as covers/dtrpg/{product_id}/{url_hash}.{validated_extension}. Reject traversal and unapproved absolute URLs; paths on disk must be derived from safe IDs/hashes. Limit image bodies (initially 32 MiB) and validate response type/signature enough to reject an HTML error page.
 

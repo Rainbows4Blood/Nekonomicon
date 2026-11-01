@@ -144,7 +144,7 @@ func (s *Store) Stats() (Stats, error) {
 	return v, e
 }
 func (s *Store) RunCounts(id string) (saved, failed int, err error) {
-	err = s.db.QueryRow(`SELECT (SELECT count(*) FROM products WHERE last_success_run_id=?),(SELECT count(*) FROM failures WHERE run_id=?)`, id, id).Scan(&saved, &failed)
+	err = s.db.QueryRow(`SELECT (SELECT count(*) FROM products WHERE last_success_run_id=?),(SELECT count(*) FROM failures WHERE run_id=? AND phase='product')`, id, id).Scan(&saved, &failed)
 	return
 }
 func (s *Store) Eligibility(run Run, ids []int64) ([]int64, error) {

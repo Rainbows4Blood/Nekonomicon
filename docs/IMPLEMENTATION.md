@@ -21,10 +21,17 @@ manager. No browser protection is bypassed. Changing cookies requires another
 connection test. Live responses and imported cookies are never test fixtures.
 
 On 2026-11-01, the selected default-release Firefox profile imported eight
-eligible-domain cookies. The real website/API requests completed, but product
-584455 returned a flat object with a top-level productId, unlike the supplied
-JSON:API-shaped fixture. Validation correctly rejected the unexpected envelope;
-support for that observed protocol difference is pending clarification.
+eligible-domain cookies. The website/API check passed. The live API returns a
+flat object with top-level productId/image, while the supplied fixture uses a
+JSON:API envelope. Both verified shapes are supported, as approved by the user.
+The current robots.txt declares no sitemaps. The user approved falling back to
+the fixed legacy /sitemap.xml entry point with robots policy still enforced and
+a visible diagnostic. A bounded live check read three sitemaps and retrieved
+products 1, 3 and 5 (22,047 / 47,984 / 39,426 bytes). Their responses survived
+temporary SQLite storage byte-for-byte; HTTP took 409 / 331 / 317 ms and commits
+1.07 / 1.06 / 1.19 ms. All three CDN requests returned 403; those were recorded
+as independent cover failures. Live cover success is not yet demonstrated.
+Temporary authenticated responses and covers are removed by the smoke command.
 
 ## Storage
 
@@ -50,6 +57,34 @@ validation decoding, covers, startup/schema creation, and shutdown. Allocation
 counts are cumulative allocation, not peak resident memory. This is one local
 measurement, not a network-throughput promise.
 
+The machine has 29,840,748,544 bytes of RAM and a local NTFS C: volume. The
+controlled end-to-end benchmark (`go run ./cmd/measure -count 1000`) uses the
+same product fixture with synthetic IDs, a local HTTP server, 8 product workers,
+4 cover workers, and 14,016-byte generated PNG covers. It saved 1,000 products
+and 1,000 covers in 1.139 s: summed product HTTP 0.794 s, validation 0.321 s,
+commits 0.369 s, peak sampled Go heap 66,658,480 bytes. These summed timings
+overlap because workers run concurrently. This includes discovery, local HTTP,
+SQLite and atomic cover files; excludes Internet latency, browser import, UI,
+and process memory outside Go's sampled heap. It is not a live crawl benchmark.
+
+## Pipeline and bounds
+
+Three sequential phases run in a UI-independent coordinator. Workers return
+results through unbuffered channels; only the coordinator calls the writer.
+Batches flush at 1,000 outcomes, 32 MiB, or 2 seconds from the first result.
+Each body is limited independently (16 MiB product, 64 MiB sitemap, 32 MiB
+cover), with at most 8 product/4 cover workers by default. Response, gzip and
+decoding allocations can temporarily exceed the body size; worker and batch
+caps bound those allocations rather than promising a 32 MiB process footprint.
+Cover pages stop at 256 records or approximately 32 MiB (plus one record).
+
+Pause cancels scheduling and retry waits while current HTTP requests settle,
+then flushes. Resume uses persisted per-product success markers, never a
+largest-ID cursor. Discovery is repeated after pause/restart. A failed commit
+retains its batch in memory; later uncommitted results are replayed on resume.
+An abrupt process exit can lose that volatile batch. End run never removes
+committed data. Same-URL cover changes and orphan-file cleanup are deferred.
+
 ## Checks so far
 
 Windows amd64: gofmt, go test ./..., and go vet ./... pass. Tests cover cookie
@@ -58,6 +93,11 @@ cycles, namespace extensions, product URL mapping, invalid/incomplete XML,
 body limits, response classification, redirect/CDN credential isolation, exact
 fixture-byte storage (including included), rollback, failed refresh preservation,
 out-of-order eligibility, exclusive writers, and abrupt-process batch recovery.
+Additional tests cover engine pause/settle/flush, new-product skips, restricted
+products continuing to completion, retry-failed recovery, authentication blocks,
+retained commit-error batches, and preservation of old covers after partial or
+HTML responses. Windows race instrumentation is unavailable without a C compiler;
+Linux validation is being prepared in the available Ubuntu WSL environment.
 
 The restricted execution sandbox could not resolve some Go standard-library
 packages; the same checks pass outside that sandbox. Go 1.27.1 and a downloaded

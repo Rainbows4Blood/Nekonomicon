@@ -117,9 +117,15 @@ func decode(b []byte, limit int) ([]byte, error) {
 	return bounded(r, limit)
 }
 func (n *Network) Get(ctx context.Context, raw string, product int64, limit int, robots, cover bool) (Response, error) {
+	return n.GetForRun(ctx, ctx, raw, product, limit, robots, cover)
+}
+
+// Starts can be cancelled to pause scheduling/retries while the current HTTP
+// request settles under ctx. This keeps pause bounded without dropping successes.
+func (n *Network) GetForRun(ctx, starts context.Context, raw string, product int64, limit int, robots, cover bool) (Response, error) {
 	var last error
 	for attempt := 0; attempt < n.Attempts; attempt++ {
-		r, e := n.once(ctx, raw, product, limit, robots, cover)
+		r, e := n.once(ctx, starts, raw, product, limit, robots, cover)
 		if e == nil {
 			return r, nil
 		}
@@ -147,14 +153,14 @@ func (n *Network) Get(ctx context.Context, raw string, product int64, limit int,
 			n.mu.Unlock()
 		}
 		if attempt+1 < n.Attempts {
-			if e = sleep(ctx, delay); e != nil {
+			if e = sleep(starts, delay); e != nil {
 				return Response{}, e
 			}
 		}
 	}
 	return Response{}, last
 }
-func (n *Network) once(ctx context.Context, raw string, product int64, limit int, robots, cover bool) (Response, error) {
+func (n *Network) once(ctx, starts context.Context, raw string, product int64, limit int, robots, cover bool) (Response, error) {
 	original, e := url.Parse(raw)
 	if e != nil {
 		return Response{}, Fail("schema", "Invalid URL")
@@ -171,7 +177,7 @@ func (n *Network) once(ctx context.Context, raw string, product int64, limit int
 	u := original
 	start := time.Now()
 	for redirects := 0; redirects <= 8; redirects++ {
-		if e = n.pace(ctx, u, robots, cover); e != nil {
+		if e = n.pace(starts, u, robots, cover); e != nil {
 			return Response{}, e
 		}
 		req, e := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -230,6 +236,10 @@ func (n *Network) once(ctx context.Context, raw string, product int64, limit int
 			f = classify(resp.StatusCode, body, product > 0)
 		}
 		if f != nil {
+			if cover && f.Kind == "authentication" {
+				f.Kind = "cover"
+				f.Message = "Cover host denied access or requires a browser challenge"
+			}
 			if s := resp.Header.Get("Retry-After"); s != "" {
 				seconds, err := strconv.ParseInt(s, 10, 64)
 				if err == nil && seconds > 0 {

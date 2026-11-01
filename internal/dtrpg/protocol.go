@@ -93,6 +93,25 @@ type Envelope struct {
 
 func Validate(body []byte, id int64) (Envelope, error) {
 	var v Envelope
+	var top map[string]json.RawMessage
+	if json.Unmarshal(body, &top) != nil {
+		return v, Fail("schema", "Product response is not a JSON object")
+	}
+	if _, wrapped := top["data"]; !wrapped {
+		// The live vBeta endpoint also serves a flat product object. Require its
+		// own ID and image field; never normalize the bytes used for storage.
+		var flat struct {
+			ProductID int64   `json:"productId"`
+			Image     *string `json:"image"`
+		}
+		if json.Unmarshal(body, &flat) != nil || flat.ProductID != id || id <= 0 || top["image"] == nil {
+			return v, Fail("schema", "Response is not a matching flat product")
+		}
+		v.Data.Type = "Product"
+		v.Data.Attributes.ProductID = flat.ProductID
+		v.Data.Attributes.Image = flat.Image
+		return v, nil
+	}
 	if json.Unmarshal(body, &v) != nil {
 		return v, Fail("schema", "Product response is not valid JSON with the expected field types")
 	}

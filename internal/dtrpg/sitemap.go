@@ -107,7 +107,10 @@ func ParseSitemap(b []byte, limit int) ([]Entry, error) {
 	return entries, nil
 }
 
-type Discovery struct{ Found, Sitemaps int }
+type Discovery struct {
+	Found, Sitemaps int
+	Fallback        bool
+}
 
 // Discover completes the full sitemap graph before returning IDs. Interrupted
 // discovery is repeated on resume; partial results can never become a crawl.
@@ -116,8 +119,12 @@ func (n *Network) Discover(ctx context.Context, progress func(Discovery)) ([]int
 	if e != nil {
 		return nil, e
 	}
-	if len(queue) == 0 {
-		return nil, Fail("discovery", "No approved sitemaps declared by robots.txt")
+	fallback := len(queue) == 0
+	if fallback {
+		queue = []string{auth.Website + "sitemap.xml"}
+		if progress != nil {
+			progress(Discovery{Fallback: true})
+		}
 	}
 	seen := map[string]bool{}
 	ids := map[int64]bool{}
@@ -158,7 +165,7 @@ func (n *Network) Discover(ctx context.Context, progress func(Discovery)) ([]int
 		}
 		processed++
 		if progress != nil {
-			progress(Discovery{len(ids), processed})
+			progress(Discovery{Found: len(ids), Sitemaps: processed, Fallback: fallback})
 		}
 	}
 	if len(ids) == 0 {
