@@ -31,6 +31,7 @@ type Snapshot struct {
 	ConnectionReady   bool       `json:"connectionReady"`
 	Running           bool       `json:"running"`
 	Catalogued        int        `json:"catalogued"`
+	CataloguedCovers  int        `json:"cataloguedCovers"`
 	Queued            int        `json:"queued"`
 	Saved             int        `json:"saved"`
 	Eligible          int        `json:"eligible"`
@@ -74,11 +75,14 @@ func New(s *store.Store, n *dtrpg.Network, c Config) (*Engine, error) {
 	if e != nil {
 		return nil, e
 	}
-	v := Snapshot{State: "setup", Message: "Import cookies and test the connection to start.", Catalogued: stats.Products, Run: run}
+	v := Snapshot{State: "setup", Message: "Import cookies and test the connection to start.", Catalogued: stats.Products, CataloguedCovers: stats.Covers, Run: run}
 	if run != nil {
 		v.State = "paused"
 		v.Phase = run.Phase
 		v.Message = "An unfinished run is available. Resume it or end it to keep the committed data."
+		if run.Phase == "covers" {
+			v.Message = "Resume to check saved covers and download missing or changed images."
+		}
 		v.Saved, v.ProductErrors, e = s.RunCounts(run.ID)
 		if e != nil {
 			return nil, e
@@ -148,8 +152,10 @@ func (e *Engine) Start(mode string, covers bool) error {
 		e.snapshot.Message = "Cannot start a run in this data folder. Check space and permissions."
 		return errors.New(e.snapshot.Message)
 	}
-	catalog, ready := e.snapshot.Catalogued, e.snapshot.ConnectionReady
-	e.snapshot = Snapshot{State: "starting", Phase: phase, Run: &run, Catalogued: catalog, ConnectionReady: ready}
+	e.snapshot = Snapshot{
+		State: "starting", Phase: phase, Run: &run, ConnectionReady: e.snapshot.ConnectionReady,
+		Catalogued: e.snapshot.Catalogued, CataloguedCovers: e.snapshot.CataloguedCovers,
+	}
 	e.launchLocked()
 	return nil
 }
@@ -401,6 +407,7 @@ func (e *Engine) flush(runID, phase string, start time.Time) error {
 	e.committedCovers += v.Covers
 	e.change(func(s *Snapshot) {
 		s.Catalogued += v.Added
+		s.CataloguedCovers += v.AddedCovers
 		s.Saved += v.Products
 		s.CoverSaved += v.Covers
 		if phase == "covers" || phase == "cover" {

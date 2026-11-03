@@ -48,10 +48,10 @@ type Result struct {
 	Failure *Failure
 }
 type Commit struct {
-	Products, Added, Covers, Failures int
-	Duration                          time.Duration
+	Products, Added, Covers, AddedCovers, Failures int
+	Duration                                       time.Duration
 }
-type Stats struct{ Products, ProductFailures, CoverFailures int }
+type Stats struct{ Products, Covers, ProductFailures, CoverFailures int }
 type CoverRow struct {
 	ID        int64
 	JSON      []byte
@@ -156,7 +156,7 @@ func (s *Store) Active() (*Run, error) {
 }
 func (s *Store) Stats() (Stats, error) {
 	var v Stats
-	e := s.db.QueryRow(`SELECT (SELECT count(*) FROM products),(SELECT count(*) FROM failures WHERE phase='product'),(SELECT count(*) FROM failures WHERE phase='cover')`).Scan(&v.Products, &v.ProductFailures, &v.CoverFailures)
+	e := s.db.QueryRow(`SELECT (SELECT count(*) FROM products),(SELECT count(*) FROM covers),(SELECT count(*) FROM failures WHERE phase='product'),(SELECT count(*) FROM failures WHERE phase='cover')`).Scan(&v.Products, &v.Covers, &v.ProductFailures, &v.CoverFailures)
 	return v, e
 }
 func (s *Store) RunCounts(id string) (saved, failed int, err error) {
@@ -245,6 +245,7 @@ func (s *Store) Commit(ctx context.Context, runID string, batch []Result) (Commi
 	}
 	product := prepare(`INSERT INTO products VALUES('dtrpg',?,?,?,?) ON CONFLICT(source,product_id) DO UPDATE SET fetched_at=excluded.fetched_at,last_success_run_id=excluded.last_success_run_id,response_json=excluded.response_json`)
 	exists := prepare(`SELECT EXISTS(SELECT 1 FROM products WHERE source='dtrpg' AND product_id=?)`)
+	coverExists := prepare(`SELECT EXISTS(SELECT 1 FROM covers WHERE source='dtrpg' AND product_id=?)`)
 	cover := prepare(`INSERT INTO covers VALUES('dtrpg',?,?,?,?) ON CONFLICT(source,product_id) DO UPDATE SET source_url=excluded.source_url,relative_path=excluded.relative_path,downloaded_at=excluded.downloaded_at`)
 	failure := prepare(`INSERT INTO failures VALUES('dtrpg',?,?,?,?,?,?,?) ON CONFLICT(source,product_id,phase) DO UPDATE SET run_id=excluded.run_id,kind=excluded.kind,http_status=excluded.http_status,message=excluded.message,attempted_at=excluded.attempted_at`)
 	clearFailure := prepare(`DELETE FROM failures WHERE source='dtrpg' AND product_id=? AND phase=?`)
@@ -253,6 +254,7 @@ func (s *Store) Commit(ctx context.Context, runID string, batch []Result) (Commi
 	}
 	defer product.Close()
 	defer exists.Close()
+	defer coverExists.Close()
 	defer cover.Close()
 	defer failure.Close()
 	defer clearFailure.Close()
@@ -263,11 +265,18 @@ func (s *Store) Commit(ctx context.Context, runID string, batch []Result) (Commi
 			_, e = failure.ExecContext(ctx, r.ID, f.Phase, runID, f.Kind, f.Status, f.Message, at)
 			v.Failures++
 		} else if r.Cover != nil {
-			_, e = cover.ExecContext(ctx, r.ID, r.Cover.URL, r.Cover.Path, at)
+			var hasCover bool
+			e = coverExists.QueryRowContext(ctx, r.ID).Scan(&hasCover)
+			if e == nil {
+				_, e = cover.ExecContext(ctx, r.ID, r.Cover.URL, r.Cover.Path, at)
+			}
 			if e == nil {
 				_, e = clearFailure.ExecContext(ctx, r.ID, "cover")
 			}
 			v.Covers++
+			if !hasCover {
+				v.AddedCovers++
+			}
 		} else {
 			var has bool
 			e = exists.QueryRowContext(ctx, r.ID).Scan(&has)

@@ -1,12 +1,12 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/Rainbows4Blood/Nekonomicon/internal/auth"
-	"github.com/Rainbows4Blood/Nekonomicon/internal/dtrpg"
-	"github.com/Rainbows4Blood/Nekonomicon/internal/store"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +15,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Rainbows4Blood/Nekonomicon/internal/auth"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/dtrpg"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/store"
 )
 
 type redirectTransport struct {
@@ -254,6 +258,91 @@ func TestAuthenticationAndIncompleteDiscovery(t *testing.T) {
 	}
 	if err := e.Resume(); err == nil {
 		t.Fatal("unvalidated auth resumed")
+	}
+}
+
+func TestReopenedCoverRunCountsAndReusesSavedFiles(t *testing.T) {
+	dir := t.TempDir()
+	var img bytes.Buffer
+	if err := png.Encode(&img, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	// Three covers were committed before shutdown. One file was removed
+	// and one product now points to a different image.
+	func() {
+		s, err := store.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		run := store.Run{ID: "paused", Mode: "new", Phase: "covers", State: "paused", Covers: true}
+		if err := s.CreateRun(run); err != nil {
+			t.Fatal(err)
+		}
+		var batch []store.Result
+		for id := int64(1); id <= 4; id++ {
+			product := fmt.Sprintf(`{"productId":%d,"image":"%d.png"}`, id, id)
+			batch = append(batch, store.Result{ID: id, JSON: []byte(product)})
+			if id == 4 {
+				continue // No previous cover record.
+			}
+			source := fmt.Sprintf("%simages/%d.png", dtrpg.CDN, id)
+			if id == 3 {
+				source = dtrpg.CDN + "images/old.png"
+			}
+			path := "covers/missing.png"
+			if id != 2 {
+				path, err = dtrpg.SaveCover(dir, id, source, img.Bytes(), "image/png")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			batch = append(batch, store.Result{ID: id, Cover: &store.Cover{URL: source, Path: path}})
+		}
+		if _, err := s.Commit(context.Background(), run.ID, batch); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/images/2.png", "/images/3.png", "/images/4.png":
+			requests.Add(1)
+		default:
+			t.Errorf("unexpected request on cover resume: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(img.Bytes())
+	}))
+	defer server.Close()
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	u, _ := url.Parse(server.URL)
+	network := dtrpg.NewNetwork(auth.Cookies{}, redirectTransport{u, server.Client().Transport})
+	e, err := New(s, network, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Shutdown()
+	if v := e.Snapshot(); v.State != "paused" || v.CataloguedCovers != 3 || v.CoverScanned != 0 {
+		t.Fatalf("before Resume: %+v", v)
+	}
+	if err := e.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, e)
+	if v := e.Snapshot(); v.State != "completed" || v.CataloguedCovers != 4 || v.CoverSaved != 3 || requests.Load() != 3 {
+		t.Fatalf("after Resume: %+v, requests=%d", v, requests.Load())
+	}
+	if err := e.Start("covers", false); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, e)
+	if v := e.Snapshot(); v.State != "completed" || v.CataloguedCovers != 4 || v.CoverTotal != 0 || requests.Load() != 3 {
+		t.Fatalf("second pass: %+v, requests=%d", v, requests.Load())
 	}
 }
 

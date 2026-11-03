@@ -37,13 +37,20 @@ export function progress(s) {
       indeterminate: true,
       count: `${n(s.found)} IDs found · ${n(s.sitemaps)} sitemaps processed`,
     };
-  if (s.phase === "covers")
+  if (s.phase === "covers") {
+    const details = [`${n(s.cataloguedCovers)} covers saved locally`];
+    if (s.coverScanDone && s.coverTotal)
+      details.push(`${n(s.coverSaved)} / ${n(s.coverTotal)} downloaded this pass`);
+    else if (s.coverScanned || s.running || s.coverScanDone)
+      details.push(`${n(s.coverScanned)} products checked`);
+    if (s.coverErrors) details.push(`${n(s.coverErrors)} failed`);
     return {
       indeterminate: !s.coverScanDone && s.running,
       max: Math.max(1, s.coverTotal || 0),
-      value: !s.coverTotal && s.state === "completed" ? 1 : (s.coverSaved || 0) + (s.coverErrors || 0),
-      count: `${n(s.coverSaved)} / ${n(s.coverTotal)} covers saved${s.coverScanDone ? "" : s.running ? " · scanning" : " · scan paused"}${s.coverErrors ? ` · ${n(s.coverErrors)} failed` : ""}`,
+      value: !s.coverTotal && s.coverScanDone ? 1 : (s.coverSaved || 0) + (s.coverErrors || 0),
+      count: details.join(" · "),
     };
+  }
   if (s.phase === "fetch")
     return {
       max: Math.max(1, s.eligible || 0),

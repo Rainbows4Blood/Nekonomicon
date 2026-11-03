@@ -31,6 +31,11 @@ sitemaps are skipped with a visible count. Download covers also works independen
 product cookies. Local data contains an idle-only folder chooser; changing the
 folder opens that catalog without moving existing files.
 
+During the cover phase, **covers saved locally** counts distinct products with a
+saved cover in this catalog, including after a restart. Resume checks each
+product's image URL and local file again. Matching files are skipped. Products
+checked and downloads this pass describe the current scan.
+
 Defaults: `%LOCALAPPDATA%\Nekonomicon` on Windows;
 `$XDG_DATA_HOME/nekonomicon` or `~/.local/share/nekonomicon` on Linux.
 The database is `catalog.sqlite`; saved cover images are under

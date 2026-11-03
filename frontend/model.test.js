@@ -55,6 +55,17 @@ test("discovery is indeterminate and refresh progress is separate from catalog",
     true,
   );
 });
+test("cover progress distinguishes the saved catalog from this scan", () => {
+  const paused = { phase: "covers", state: "paused", cataloguedCovers: 80000 };
+  const inventory = `${(80000).toLocaleString()} covers saved locally`;
+  assert.equal(progress(paused).count, inventory);
+  assert.equal(progress({ ...paused, running: true, coverScanned: 17 }).count,
+    `${inventory} · 17 products checked`);
+  assert.equal(progress({ ...paused, state: "completed_errors", coverScanDone: true,
+    coverSaved: 4, coverTotal: 5, coverErrors: 1 }).count,
+    `${inventory} · 4 / 5 downloaded this pass · 1 failed`);
+});
+
 test("all production states have useful labels", () => {
   for (const state of [
     "setup",
