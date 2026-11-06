@@ -38,6 +38,18 @@ test("actual renderer handles all run states and committed progress", async () =
   assert.equal($("sitemapSkipped").textContent, "1 sitemap skipped by the site's robots policy.");
   event({ ...initial, sitemapsSkipped: 0 });
   assert.equal($("sitemapSkipped").hidden, true);
+  // Stage highlighting must follow the held run, including cover-only work.
+  event({ ...initial, state: "covers", phase: "covers", running: true, cataloguedCovers: 17, run: { mode: "covers", phase: "covers", covers: false } });
+  assert.equal($("stepCovers").getAttribute("aria-current"), "step");
+  assert.equal($("stepDiscover").dataset.skipped, "true");
+  assert.equal($("stepFetch").dataset.skipped, "true");
+  assert.equal($("cataloguedCovers").textContent, "17");
+  event({ ...initial, state: "paused", phase: "fetch", run: { mode: "retry", phase: "fetch", covers: false } });
+  assert.equal($("stepFetch").getAttribute("aria-current"), "step");
+  assert.equal($("stepDiscover").dataset.skipped, "true");
+  assert.equal($("stepCovers").dataset.skipped, "true");
+  event(initial);
+  assert.equal(document.querySelector('[aria-current="step"]'), null);
   $("websiteCookie").value = "synthetic";
   $("apiCookie").value = "synthetic";
   event({ ...initial, source: "dmsguild", websiteHost: "www.dmsguild.com", apiHost: "api.dmsguild.com", probeID: 170778, connectionReady: false });
@@ -64,6 +76,15 @@ test("actual renderer handles all run states and committed progress", async () =
   assert.equal($("maintenancePanel").hidden, false);
   assert.equal($("crawlPanel").hidden, true);
   assert.equal($("maintenanceTab").getAttribute("aria-selected"), "true");
+  assert.equal($("workspaceTitle").textContent, "Data maintenance");
+  $("maintenanceTab").onkeydown({ key: "ArrowUp", preventDefault() {} });
+  assert.equal($("crawlPanel").hidden, false);
+  assert.equal($("workspaceTitle").textContent, "Crawler");
+  // linkedom's tabIndex getter treats zero as -1; inspect the reflected attribute.
+  assert.equal($("crawlTab").getAttribute("tabindex"), "0");
+  assert.equal($("maintenanceTab").getAttribute("tabindex"), "-1");
+  $("crawlTab").onkeydown({ key: "ArrowDown", preventDefault() {} });
+  assert.equal($("maintenancePanel").hidden, false);
   await new Promise(resolve => setTimeout(resolve, 0));
   const task = { state: "extracting", running: true, held: true, needsSchema: false, summary: { total: 100, current: 0, pending: 100 }, job: { processed: 64, total: 100, warned: 2, failed: 1 } };
   event({ ...initial, storageAvailable: true, maintenance: task });

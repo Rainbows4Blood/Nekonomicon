@@ -17,6 +17,21 @@ function message(text) {
 function text(id, value) {
   if ($(id).textContent !== value) $(id).textContent = value;
 }
+function renderSteps(s = state) {
+  const mode = s.run?.mode || $("mode").value;
+  const covers = s.run ? s.run.covers : $("covers").checked;
+  for (const [id, phase, description, included] of [
+    ["stepDiscover", "discover", "Find product IDs", !["retry", "covers"].includes(mode)],
+    ["stepFetch", "fetch", "Keep full responses", mode !== "covers"],
+    ["stepCovers", "covers", "Save primary images", mode === "covers" || covers],
+  ]) {
+    const step = $(id);
+    if ((s.run || s.running) && s.phase === phase) step.setAttribute("aria-current", "step");
+    else step.removeAttribute("aria-current");
+    step.dataset.skipped = String(!included);
+    step.querySelector("div > span").textContent = included ? description : "Not included";
+  }
+}
 function render(s) {
   const serialized = JSON.stringify([s, localBusy, profiles.length, abortRequested]);
   if (serialized === lastRendered) return;
@@ -42,7 +57,7 @@ function render(s) {
     page = 0;
     $("errors").replaceChildren();
     if ($("activity").open) loadErrors();
-    $("connections").open = !s.connectionReady;
+    if (!s.connectionReady) $("connections").open = true;
   }
   $("mode").disabled = c.locked || s.busy || localBusy;
   $("covers").disabled = c.locked || s.busy || localBusy;
@@ -70,6 +85,14 @@ function render(s) {
     : s.connectionReady
       ? "Connection ready"
       : "Sign-in / check needed";
+  $("connection").dataset.ready = String(Boolean(s.connectionReady && !s.busy));
+  text("footerSource", s.source === "dmsguild" ? "DM’s Guild" : "DriveThruRPG");
+  text("cataloguedCovers", Number(s.cataloguedCovers || 0).toLocaleString());
+  text("runErrors", ((s.productErrors || 0) + (s.coverErrors || 0)).toLocaleString());
+  const needsAttention = ["setup", "maintenance_required", "blocked_auth", "blocked_storage", "completed_errors"].includes(s.state) || Boolean(s.metadataWarnings || s.metadataFailures);
+  text("runBadge", needsAttention ? "Needs attention" : s.running ? "In progress" : s.state === "paused" ? "Paused" : s.state === "completed" ? "Complete" : s.state === "ready" ? "Ready" : "Idle");
+  $("runBadge").dataset.tone = needsAttention ? "warning" : s.running ? "active" : s.state === "completed" ? "success" : "neutral";
+  renderSteps(s);
   $("queued").textContent =
     s.phase === "discover" ? "—" : Number(s.queued || 0).toLocaleString();
   $("catalogued").textContent = Number(s.catalogued || 0).toLocaleString();
@@ -92,8 +115,8 @@ function render(s) {
   text("authNote", s.authNote || "");
   $("folder").textContent = s.dataFolder || "";
   $("storageStatus").textContent = s.storageReady
-    ? "SQLite + local covers · storage ready"
-    : "Local storage unavailable";
+    ? "Local storage ready"
+    : s.storageAvailable ? "Catalog needs maintenance" : "Local storage unavailable";
   $("errorCount").textContent =
     (s.productErrors || 0) + (s.coverErrors || 0) > 0
       ? `· ${(s.productErrors || 0) + (s.coverErrors || 0)} this run`
@@ -205,6 +228,8 @@ if (!api) {
     .querySelectorAll("button,input,select")
     .forEach((el) => (el.disabled = true));
 } else {
+  $("mode").onchange = () => renderSteps();
+  $("covers").onchange = () => renderSteps();
   $("abortLoading").onclick = async () => {
     if (abortRequested || state.closing) return;
     abortRequested = true;

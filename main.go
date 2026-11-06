@@ -17,7 +17,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err = wails.Run(&options.App{Title: "Nekonomicon", Width: 980, Height: 860, MinWidth: 390, MinHeight: 560, AssetServer: &assetserver.Options{Assets: files}, OnStartup: app.startup, OnDomReady: app.domReady, OnBeforeClose: app.beforeClose, OnShutdown: app.shutdown, Bind: []interface{}{app}, BackgroundColour: options.NewRGB(19, 18, 23)}); err != nil {
+	if err = wails.Run(&options.App{Title: "Nekonomicon", Width: 1440, Height: 900, MinWidth: 390, MinHeight: 560, AssetServer: &assetserver.Options{Assets: files}, OnStartup: app.startup, OnDomReady: app.domReady, OnBeforeClose: app.beforeClose, OnShutdown: app.shutdown, Bind: []interface{}{app}, BackgroundColour: options.NewRGB(21, 22, 27)}); err != nil {
 		println("Nekonomicon could not start:", err.Error())
 	}
 }

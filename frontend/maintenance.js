@@ -1,6 +1,10 @@
 export function maintenanceUI({ api, getState, invoke }) {
   const $ = id => document.getElementById(id), n = v => Number(v || 0).toLocaleString();
   let selected = "crawl", page = 0, source = "", priorState = "";
+  const narrow = window.matchMedia?.("(max-width: 760px)");
+  const orientTabs = () => document.querySelector('[role="tablist"]').setAttribute("aria-orientation", narrow?.matches ? "horizontal" : "vertical");
+  orientTabs();
+  narrow?.addEventListener("change", orientTabs);
   function select(name, focus = true) {
     selected = name;
     for (const tab of ["crawl", "maintenance"]) {
@@ -8,6 +12,12 @@ export function maintenanceUI({ api, getState, invoke }) {
       $(tab + "Tab").tabIndex = tab === name ? 0 : -1;
       $(tab + "Panel").hidden = tab !== name;
     }
+    $("workspaceTitle").textContent = name === "crawl" ? "Crawler" : "Data maintenance";
+    $("workspaceContext").textContent = name === "crawl" ? "Collection tools" : "Catalog tools";
+    $("workspaceDescription").textContent = name === "crawl"
+      ? "Collect product records and covers from your selected storefront."
+      : "Keep your local catalog up to date. Original responses are preserved.";
+    $("workspace").scrollTop = 0;
     if (focus) $(name + "Tab").focus();
     if (name === "maintenance" && api && getState().storageAvailable && !getState().busy && !getState().maintenance?.running) {
       void invoke(() => api.RefreshMaintenance());
@@ -16,7 +26,7 @@ export function maintenanceUI({ api, getState, invoke }) {
   for (const name of ["crawl", "maintenance"]) {
     $(name + "Tab").onclick = () => select(name);
     $(name + "Tab").onkeydown = event => {
-      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
       select(event.key === "Home" ? "crawl" : event.key === "End" ? "maintenance" : selected === "crawl" ? "maintenance" : "crawl");
     };

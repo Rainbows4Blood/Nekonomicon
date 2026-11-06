@@ -1,5 +1,31 @@
 # Implementation and validation
 
+## Desktop workspace redesign — 2026-11-06
+
+The frontend now fills the native window, with persistent storefront/navigation
+and Local data in the sidebar, a shared status bar, and a flexible main workspace.
+Crawler commands, phase progress, committed catalog/cover counts, errors and
+connection controls have separate areas. Maintenance reuses the shell with
+metadata/progress/issues in the main column and database structure alongside.
+Default native size is 1440 × 900. No backend storage or crawl behavior changed.
+
+Windows `npm --prefix frontend run check`, `go test ./...`, `go vet ./...`, and
+the production Wails build pass. The validated build is delivered as
+`build/bin/Nekonomicon.exe`, replacing the primary executable so existing
+symlinks and shortcuts continue to work. Alternative executable names require
+an explicit user request, as recorded in `AGENTS.md`.
+Wails still emits the previously documented `Not found: store.Run` warning.
+
+Headless Edge exercised the real frontend with synthetic Wails snapshots at
+1920, 1440, 1280, 1024, 980, 760, 600, 390 and 360 px. Checks cover crawl and
+maintenance states, document/panel overflow, vertical/horizontal keyboard
+navigation, command routing, masked cookie fields, loading focus containment,
+and light/dark appearance. Desktop and narrow screenshots were inspected;
+test counts and paths are illustrative. Renderer regressions cover held phase
+highlighting, skipped retry/cover-only phases, cover counts and navigation.
+The native WebView2 window and Linux build/rendering were not rerun for this
+redesign. No live crawl ran and no user catalog or credentials were changed.
+
 The DTRPG acceptance checks are complete as of 2026-11-01. This file records
 their evidence and limits; the standalone HTML mockup remains illustrative.
 The production application is the Go/Wails executable with assets in frontend/.
