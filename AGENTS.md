@@ -6,7 +6,7 @@ Read README.md and docs/SPEC.md before implementation. Read docs/design/README.m
 
 ## Scope
 
-- Implement DriveThruRPG only until the DTRPG acceptance gate passes. Do not add disabled future storefronts or configurable source plugins.
+- Support DriveThruRPG and DM’s Guild only (DM’s Guild expansion authorized 2026-11-05 after the DTRPG gate passed). Do not add disabled future storefronts or configurable source plugins.
 - Use Go and Wails, local SQLite, full API response JSON, and local cover files.
 - Keep architecture small: one process, bounded workers and channels, one database writer, three sequential phases.
 - Do not restore MongoDB, S3, distributed queues, leases, generic job frameworks, classification, or elaborate product schemas from history.
@@ -15,7 +15,10 @@ Read README.md and docs/SPEC.md before implementation. Read docs/design/README.m
 ## Implementation
 
 - Keep crawling independent of Wails and frontend lifecycles. Use contexts for cancellation and injectable HTTP for tests.
-- Preserve complete response bytes, including top-level included resources. Decode only fields needed for validation and covers.
+- Preserve complete response bytes, including top-level included resources. Derive catalog metadata through the shared, versioned extractor; never replace the original response with normalized JSON.
+- Every data-model extension must ship with both live-crawl handling and an explicit, recoverable Data maintenance path for existing records. Opening a catalog only inspects compatibility: never initialize, migrate, or backfill automatically. Block crawling when schema maintenance is required.
+- Extract comprehensively and conservatively: preserve source values, avoid guessed meanings, keep useful fields on partial failures, and retain raw responses on complete extraction failures. Mark older derived data stale.
+- Future product displays may assume prices are in euros (user decision 2026-11-06). Extraction preserves original amounts without currency conversion or an invented source currency field.
 - Keep one write owner. Prepare statements; use short batch transactions. No network operations inside transactions.
 - Bound response size, buffered bytes, worker count, retries, and UI events. Defaults in the spec are tunable starting values, not performance claims.
 - Persist success and its run marker together. Never mark buffered results committed. Preserve last good JSON on failed refresh.

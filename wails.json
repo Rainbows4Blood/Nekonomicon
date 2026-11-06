@@ -1,0 +1,11 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Nekonomicon",
+  "outputfilename": "Nekonomicon",
+  "frontend:dir": "frontend",
+  "frontend:install": "npm install --ignore-scripts",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "",
+  "author": {"name": "Nekonomicon contributors"},
+  "info": {"companyName": "Nekonomicon", "productName": "Nekonomicon", "productVersion": "0.1.0", "copyright": "Nekonomicon contributors", "comments": "Local DriveThruRPG and DM’s Guild crawler"}
+}

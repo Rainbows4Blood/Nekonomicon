@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Nekonomicon</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="window" id="appContent" inert aria-busy="true">
+      <header>
+        <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path
+            d="M5 13 6 4l8 5h4l8-5 1 9v8c0 5-5 8-11 8S5 26 5 21Z"
+            stroke="currentColor"
+            stroke-width="1.7"
+          />
+          <path
+            d="M11 17h1m8 0h1m-7 5 2 2 2-2"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+          /></svg
+        ><span class="brand">NEKONOMICON</span
+        ><span class="local">Your local book crawler</span>
+      </header>
+      <main>
+        <div class="intro">
+          <span class="eyebrow">A HOME FOR YOUR CURIOSITY</span>
+          <h1>A little curiosity.<br />A lot of books.</h1>
+          <p class="muted">
+            Collect DriveThruRPG and DM’s Guild records and covers on this computer.
+          </p>
+        </div>
+        <div class="source">
+          <span class="source-symbol" aria-hidden="true">D</span>
+          <div>
+            <label>Storefront<select id="source"><option value="dtrpg">DriveThruRPG</option><option value="dmsguild">DM’s Guild</option></select></label
+            ><span class="note">Product records &amp; primary covers</span>
+          </div>
+          <span class="badge" id="connection">Checking local storage…</span>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Workspace">
+          <button id="crawlTab" role="tab" aria-selected="true" aria-controls="crawlPanel">Crawler</button>
+          <button id="maintenanceTab" role="tab" aria-selected="false" aria-controls="maintenancePanel" tabindex="-1">Data maintenance</button>
+        </div>
+        <p id="notice" class="error" role="alert" hidden></p>
+        <div id="crawlPanel" role="tabpanel" aria-labelledby="crawlTab">
+        <p id="maintenanceGate" class="maintenance-gate" hidden><span id="maintenanceGateMessage">Database needs maintenance before crawling.</span> <button id="openMaintenance">Open data maintenance</button></p>
+        <div class="toolbar">
+          <label
+            >Run mode<select id="mode">
+              <option value="new">New products</option>
+              <option value="refresh">Refresh all</option>
+              <option value="retry">Retry failed</option>
+            </select></label
+          ><span class="grow"></span
+          ><button id="coverOnly">Download covers</button
+          ><button id="end" hidden>End run</button
+          ><button class="primary" id="primary" disabled>Start crawl</button>
+        </div>
+        <div class="metrics">
+          <div class="metric">
+            <span>Queued products</span><strong id="queued">—</strong>
+          </div>
+          <div class="metric">
+            <span>Catalogued locally</span><strong id="catalogued">0</strong>
+          </div>
+        </div>
+        <section aria-labelledby="phase">
+          <div class="statusline">
+            <strong id="phase">Getting ready</strong
+            ><span class="muted" id="count">No active run</span>
+          </div>
+          <progress
+            id="progress"
+            value="0"
+            max="1"
+            aria-label="Current phase progress"
+          ></progress>
+          <p id="status" class="status-note" role="status">
+            Opening your local catalog…
+          </p>
+          <p id="sitemapSkipped" class="note" hidden></p>
+          <p id="fallback" class="note" hidden>
+            Robots declares no sitemaps. Using this storefront’s verified
+            sitemap.xml entry point.
+          </p>
+          <p id="speed" class="note"></p>
+          <p id="metadataNotice" class="error" hidden></p>
+        </section>
+        <label class="option"
+          ><input type="checkbox" id="covers" checked />Download covers after
+          records</label
+        >
+        <details id="connections">
+          <summary>Connection &amp; cookies</summary>
+          <div class="panel">
+            <div class="fields">
+              <label
+                >Firefox profile<select id="profile">
+                  <option value="">Loading profiles…</option>
+                </select></label
+              ><label
+                >Container<select id="container">
+                  <option value="0">Default (no container)</option>
+                </select></label
+              >
+            </div>
+            <div class="actions">
+              <button id="import">Import from Firefox</button
+              ><button
+                id="manual"
+                aria-expanded="false"
+                aria-controls="cookieFields"
+              >
+                Paste cookies manually
+              </button>
+            </div>
+            <div id="cookieFields" hidden>
+              <div class="fields">
+                <label
+                  >Website Cookie header<input
+                    id="websiteCookie"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="www.drivethrurpg.com"
+                    maxlength="1048576" /></label
+                ><label
+                  >API Cookie header<input
+                    id="apiCookie"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="api.drivethrurpg.com"
+                    maxlength="1048576"
+                /></label>
+              </div>
+              <div class="actions">
+                <button id="saveCookies">Save cookies</button>
+              </div>
+            </div>
+            <div class="test-row">
+              <label
+                >Test product ID<input
+                  id="testID"
+                  type="number"
+                  value="584455"
+                  min="1"
+                  step="1" /></label
+              ><button id="test">Test connection</button>
+            </div>
+            <p id="authNote" class="note" role="status">
+              Sign in to DriveThruRPG in Firefox, then import the matching
+              profile and container.
+            </p>
+          </div>
+        </details>
+        <details id="activity">
+          <summary>Activity &amp; errors <span id="errorCount"></span></summary>
+          <div class="panel">
+            <p class="note">
+              Recorded product and cover failures. Successful records are kept.
+            </p>
+            <ul id="errors" class="errors">
+              <li>No recorded failures.</li>
+            </ul>
+            <div class="actions">
+              <button id="previous">Previous</button
+              ><span id="pageLabel" class="note"></span
+              ><button id="next">Next</button
+              ><button id="reloadErrors">Refresh</button
+              ><button id="retry">Retry failed products</button>
+            </div>
+            <p id="retryNote" class="note"></p>
+          </div>
+        </details>
+        </div>
+        <div id="maintenancePanel" role="tabpanel" aria-labelledby="maintenanceTab" hidden>
+          <h2>Keep your catalog up to date</h2>
+          <p class="muted">Apply database updates and extract metadata from saved responses. Your original responses are preserved. No sign-in is needed.</p>
+          <p id="maintenanceBlock" class="error" hidden></p>
+          <section class="maintenance-task" aria-labelledby="schemaTitle">
+            <h3 id="schemaTitle">Database structure</h3>
+            <p id="schemaStatus" class="status-note"></p>
+            <div class="actions"><button id="applySchema">Apply database update</button></div>
+          </section>
+          <section class="maintenance-task" aria-labelledby="metadataTitle">
+            <h3 id="metadataTitle">Product metadata</h3>
+            <p class="muted">Extract titles, creators, prices, formats, files, ratings and taxonomy. Future crawls apply the same transformation automatically.</p>
+            <div class="metrics">
+              <div class="metric"><span>Up to date</span><strong id="metadataCurrent">—</strong></div>
+              <div class="metric"><span>Needs extraction</span><strong id="metadataPending">—</strong></div>
+            </div>
+            <p id="metadataCoverage" class="note"></p>
+            <div class="actions">
+              <button id="extractMetadata" class="primary">Extract metadata</button>
+              <button id="pauseMaintenance" hidden>Pause</button>
+              <button id="endMaintenance" hidden>End maintenance</button>
+              <button id="refreshMaintenance">Refresh counts</button>
+            </div>
+          </section>
+          <section aria-label="Maintenance progress">
+            <div class="statusline"><strong id="maintenanceState">Ready</strong><span id="maintenanceCount" class="muted"></span></div>
+            <progress id="maintenanceProgress" max="1" value="0" aria-label="Committed maintenance progress"></progress>
+            <p id="maintenanceMessage" class="status-note" role="status" aria-live="polite"></p>
+          </section>
+          <details id="metadataIssues">
+            <summary>Warnings &amp; failed extractions</summary>
+            <p class="note">Warnings preserve useful metadata and do not need repeated extraction. Failed extractions can be retried with Extract metadata.</p>
+            <ol id="metadataIssueList" class="errors"></ol>
+            <div class="actions"><button id="metadataPrevious">Previous</button><span id="metadataPage" class="note">Page 1</span><button id="metadataNext">Next</button><button id="reloadMetadataIssues">Refresh issues</button></div>
+          </details>
+        </div>
+        <details id="storage">
+          <summary>Local data</summary>
+          <div class="panel">
+            <p id="folder" class="folder"></p>
+            <div class="actions">
+              <button id="chooseFolder">Choose data folder</button>
+            </div>
+            <p class="note">
+              Changing folders opens the catalog there. It does not move
+              existing records or covers. Cookies stay in private credential
+              storage.
+            </p>
+          </div>
+        </details>
+      </main>
+      <footer>
+        <span id="storageStatus">Opening local storage</span
+        ><span>Saved results stay on this computer</span>
+      </footer>
+    </div>
+    <div id="loadingOverlay" class="loading-overlay">
+      <div id="loadingDialog" class="loading-dialog" role="dialog" aria-modal="true" aria-labelledby="loadingTitle" aria-describedby="loadingMessage loadingHint" tabindex="-1">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <h2 id="loadingTitle">Opening your catalog</h2>
+        <p id="loadingMessage" role="status" aria-live="polite">Preparing local storage…</p>
+        <p id="loadingHint" class="muted">Large catalogs can take a while. Please keep this window open.</p>
+        <button id="abortLoading">Abort and close</button>
+      </div>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,5 +1,22 @@
 # Desktop design handoff
 
+Catalog opening uses a blocking, keyboard-accessible inspection overlay. Opening
+never initializes, upgrades, or backfills data. Incompatible schemas leave the
+Crawler tab disabled with a link to Data maintenance. The shared storefront
+selector and Local data section remain available when no work owns the catalog.
+
+Data maintenance offers separate Database structure and Product metadata tasks.
+Apply database update explicitly initializes/upgrades tables; Extract metadata
+processes missing/outdated/failed projections for the selected storefront.
+Schema updates show stages and a Cancel database update button. Extraction
+shows committed/total progress, current/pending counts, warnings, failures, and
+Pause/Resume/End controls. Warning-only results count as complete. Issue lists
+are paginated and rendered with textContent. Neither task requires sign-in.
+
+Tabs support arrow keys, Home/End, roving tab focus, and correctly associated
+panels. Existing run and maintenance ownership both lock source/folder changes.
+Closing waits for cancellation/rollback or current batch completion before exit.
+
 Open crawler.html directly in a browser. It is self-contained and works offline with no build step. All numbers and interactions are demonstrations; it performs no real authentication, filesystem access, or crawling.
 
 ## Visual direction
@@ -18,4 +35,16 @@ Catalogued counts all saved products; progress counts outcomes within the curren
 
 Treat docs/SPEC.md as the behavioral authority. Use frontend state snapshots emitted by Go at no more than 4 Hz; the demo JavaScript is disposable. Avoid per-product DOM updates and loading complete JSON into the frontend. Local storage is ready by default; the data-folder chooser can be a small idle-only settings action later.
 
-There is intentionally no navigation to other storefronts, browsing, analysis, remote storage, or infrastructure settings. No external assets or icon package are required by this mockup.
+The implemented Wails screen lives in `frontend/`. It uses Go snapshots at 4 Hz,
+skips unchanged snapshots, masks and clears pasted cookies, and pages persisted
+errors 50 at a time. Folder selection is implemented in Local data and requires
+ending any unfinished run first. The standalone mockup stays unchanged and does
+not import credentials or crawl. Native Windows checks covered desktop/narrow
+layouts and keyboard focus; the production renderer is tested across every run
+state. Linux light appearance was checked under WSLg with software rendering.
+
+Robots exclusions appear as a quiet skipped-sitemap count that remains visible
+during fetching. They do not pause a run. Discovery progress is retained across
+pause/resume while the process stays open; reopening the app rediscovers it.
+
+The production screen now offers DriveThruRPG and DM’s Guild through a labeled native selector. It locks during active/paused runs and connection operations. Switching resets connection readiness, clears manual cookie fields, updates host hints and the test product ID, and displays only that store’s catalog/errors. Keyboard focus returns to the selector after switching. The original offline mockup remains a DTRPG illustration. Data maintenance is implemented; catalog browsing, remote storage, and infrastructure settings remain out of scope. No external assets or icon package are required by this mockup.
