@@ -38,4 +38,6 @@ Read README.md and docs/SPEC.md before implementation. Read docs/design/README.m
 
 ## Delivery
 
+Build and deliver the Windows application as `build/bin/Nekonomicon.exe`, replacing the primary executable so existing symlinks and shortcuts continue to work. Do not create alternative executable names (such as `Nekonomicon-redesign.exe`, `Nekonomicon-loading.exe`, or version-suffixed names) unless the user explicitly requests one. If the primary executable is locked by a running instance, arrange a safe close before replacing it; do not work around the lock by delivering a differently named executable or forcibly terminating active catalog work.
+
 Keep docs current with implemented behavior. Do not claim the static mockup performs real crawling or authentication. Do not change the agreed architecture or expand scope to other storefronts without an explicit task. Routine implementation choices within this specification do not require repeated approval.

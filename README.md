@@ -4,8 +4,13 @@ A small, fast local book crawler built with Go and Wails. Supports **DriveThruRP
 
 The desktop application includes: scoped Firefox/manual authentication, sitemap discovery, complete API responses in SQLite, structured product metadata, recoverable runs, local primary covers, and explicit Data maintenance. See [implementation and validation notes](docs/IMPLEMENTATION.md) for measured results and platform limitations.
 
+The frontend uses a full-window desktop workspace: persistent storefront/navigation
+sidebar, crawl command bar, run overview, connection inspector, and shared status
+bar. Data maintenance has its own workspace within the same shell. Layouts adapt
+to narrow windows and system light/dark appearance.
+
 - [Implementation specification](docs/SPEC.md): scope, storage, pipeline, recovery, authentication, and acceptance criteria.
-- [Interactive desktop mockup](docs/design/crawler.html): download/open this file in a browser; no server, dependencies, credentials, or network required. GitHub displays its source rather than running it.
+- [Original interactive mockup](docs/design/crawler.html): historical interaction reference, predating the full-window redesign; no server, dependencies, credentials, or network required. GitHub displays its source rather than running it.
 - [Design handoff](docs/design/README.md): screen behavior and implementation notes.
 - [Agent instructions](AGENTS.md): engineering constraints and validation expectations.
 - [Example product response](docs/fixtures/dtrpg-product-584455.json): user-supplied response retained in full.
