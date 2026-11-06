@@ -8,7 +8,7 @@ import (
 	"io/fs"
 )
 
-//go:embed frontend/index.html frontend/style.css frontend/app.js frontend/model.js
+//go:embed frontend/index.html frontend/style.css frontend/app.js frontend/model.js frontend/maintenance.js
 var assets embed.FS
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err = wails.Run(&options.App{Title: "Nekonomicon", Width: 980, Height: 860, MinWidth: 390, MinHeight: 560, AssetServer: &assetserver.Options{Assets: files}, OnStartup: app.startup, OnShutdown: app.shutdown, Bind: []interface{}{app}, BackgroundColour: options.NewRGB(19, 18, 23)}); err != nil {
+	if err = wails.Run(&options.App{Title: "Nekonomicon", Width: 980, Height: 860, MinWidth: 390, MinHeight: 560, AssetServer: &assetserver.Options{Assets: files}, OnStartup: app.startup, OnDomReady: app.domReady, OnBeforeClose: app.beforeClose, OnShutdown: app.shutdown, Bind: []interface{}{app}, BackgroundColour: options.NewRGB(19, 18, 23)}); err != nil {
 		println("Nekonomicon could not start:", err.Error())
 	}
 }

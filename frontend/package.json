@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node --check app.js && node --check model.js",
+    "build": "node --check app.js && node --check model.js && node --check maintenance.js",
     "test": "node --test model.test.js renderer.test.js",
     "check": "npm run build && npm test"
   },

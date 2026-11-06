@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 	"github.com/pierrec/lz4/v4"
 	_ "modernc.org/sqlite"
 )
@@ -98,7 +99,11 @@ func containers(path string) []Container {
 
 var errImport = errors.New("Firefox cookies unavailable or unsupported; close Firefox and retry, or paste cookies manually")
 
-func Import(profile Profile, container uint32) (Cookies, []string, error) {
+func Import(profile Profile, container uint32, sources ...storefront.Source) (Cookies, []string, error) {
+	source := storefront.Default(sources...)
+	if !source.Valid() {
+		return Cookies{}, nil, errImport
+	}
 	// Read-only SQLite transactions include WAL; never copy the main file alone.
 	path := filepath.ToSlash(filepath.Join(profile.Path, "cookies.sqlite"))
 	if runtime.GOOS == "windows" && !strings.HasPrefix(path, "/") {
@@ -124,7 +129,7 @@ func Import(profile Profile, container uint32) (Cookies, []string, error) {
 	if e = tx.QueryRow("PRAGMA user_version").Scan(&schema); e != nil {
 		return Cookies{}, nil, errImport
 	}
-	rows, e := tx.Query(`SELECT name,value,host,path,isSecure,expiry,originAttributes,creationTime FROM moz_cookies WHERE host IN ('drivethrurpg.com','.drivethrurpg.com','www.drivethrurpg.com','.www.drivethrurpg.com','api.drivethrurpg.com','.api.drivethrurpg.com')`)
+	rows, e := tx.Query(`SELECT name,value,host,path,isSecure,expiry,originAttributes,creationTime FROM moz_cookies WHERE host IN (?,?,?,?,?,?)`, source.Domain(), "."+source.Domain(), "www."+source.Domain(), ".www."+source.Domain(), "api."+source.Domain(), ".api."+source.Domain())
 	if e != nil {
 		return Cookies{}, nil, errImport
 	}
@@ -133,7 +138,7 @@ func Import(profile Profile, container uint32) (Cookies, []string, error) {
 	total := 0
 	identities := map[string]bool{}
 	add := func(c Cookie, ctx string) error {
-		id, site, err := Context(ctx)
+		id, site, err := Context(ctx, source)
 		if err != nil {
 			warn[err.Error()] = true
 			return nil
@@ -192,7 +197,7 @@ func Import(profile Profile, container uint32) (Cookies, []string, error) {
 		warn["Current Firefox session snapshot unavailable; database cookies loaded. Manual paste can include unsaved session cookies."] = true
 	}
 	for _, s := range entries {
-		if !Relevant(s.Host) {
+		if !source.Relevant(s.Host) {
 			continue
 		}
 		ctx := url.Values{}
@@ -234,7 +239,7 @@ func Import(profile Profile, container uint32) (Cookies, []string, error) {
 		warnings = append(warnings, w)
 	}
 	if len(out.Imported) == 0 {
-		return out, warnings, errors.New("No DTRPG cookies in this Firefox profile/container; sign in there or paste cookies")
+		return out, warnings, fmt.Errorf("No %s cookies in this Firefox profile/container; sign in there or paste cookies", source.Name())
 	}
 	return out, warnings, nil
 }

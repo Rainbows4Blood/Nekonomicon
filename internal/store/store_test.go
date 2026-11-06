@@ -105,7 +105,7 @@ func TestCoverPagesSeekBySourceAndProductID(t *testing.T) {
 	}
 	// A page must be a range seek, not a scan/sort repeated for every 256 rows.
 	// The latter became very slow on a 347,310-record catalog.
-	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+coverPageQuery, 512)
+	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+coverPageQuery, "dtrpg", 512)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,10 +250,16 @@ func BenchmarkStorage(b *testing.B) {
 	b.ResetTimer()
 	batch := make([]Result, 0, 800)
 	for i := 0; i < b.N; i++ {
-		batch = append(batch, Result{ID: int64(i + 1), JSON: body})
+		// Match the response ID so the benchmark includes successful extraction.
+		response := bytes.ReplaceAll(body, []byte("584455"), []byte(fmt.Sprint(i+1)))
+		batch = append(batch, Result{ID: int64(i + 1), JSON: response})
 		if len(batch) == 800 || i == b.N-1 {
-			if _, e = s.Commit(context.Background(), "bench", batch); e != nil {
+			var committed Commit
+			if committed, e = s.Commit(context.Background(), "bench", batch); e != nil {
 				b.Fatal(e)
+			}
+			if committed.MetadataFailures != 0 {
+				b.Fatal("benchmark did not exercise successful extraction")
 			}
 			batch = batch[:0]
 		}

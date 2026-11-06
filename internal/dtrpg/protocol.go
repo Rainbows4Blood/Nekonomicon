@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Rainbows4Blood/Nekonomicon/internal/auth"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 	"golang.org/x/net/html"
 )
 
@@ -37,12 +37,11 @@ func FailureOf(e error) *Failure {
 	}
 	return Fail("network", "Request failed or was cancelled")
 }
-func ProductURL(id int64) string {
-	return fmt.Sprintf("%sapi/vBeta/products/%d?groupId=1&siteId=10", auth.API, id)
-}
-func ProductID(raw string) int64 {
+func ProductURL(id int64) string { return storefront.DTRPG.ProductURL(id) }
+func ProductID(raw string, sources ...storefront.Source) int64 {
+	source := storefront.Default(sources...)
 	u, e := url.Parse(raw)
-	if e != nil || !auth.Approved(u) || u.Host == "api.drivethrurpg.com" {
+	if e != nil || !source.WebsiteURL(u) {
 		return 0
 	}
 	var s string

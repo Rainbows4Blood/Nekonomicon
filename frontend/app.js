@@ -1,12 +1,15 @@
 import { controls, progress, labels } from "./model.js";
+import { maintenanceUI } from "./maintenance.js";
 const $ = (id) => document.getElementById(id),
   api = window.go?.main?.App;
+let abortRequested = false, overlayVisible = true, previousFocus = null;
 let state = {},
   profiles = [],
   page = 0,
   lastState = "",
   localBusy = false,
   lastRendered = "";
+const maintenance = maintenanceUI({ api, getState: () => state, invoke });
 function message(text) {
   $("notice").textContent = text;
   $("notice").hidden = !text;
@@ -15,16 +18,32 @@ function text(id, value) {
   if ($(id).textContent !== value) $(id).textContent = value;
 }
 function render(s) {
-  const serialized = JSON.stringify([s, localBusy, profiles.length]);
+  const serialized = JSON.stringify([s, localBusy, profiles.length, abortRequested]);
   if (serialized === lastRendered) return;
   lastRendered = serialized;
+  const sourceChanged = state.source !== s.source;
+  const priorLoadingError = state.loadingError;
   state = s;
+  maintenance.render(s, s.busy || localBusy);
   const c = controls({ ...s, busy: s.busy || localBusy }),
     p = progress(s);
   $("primary").textContent = c.primary;
   $("primary").disabled = c.primaryDisabled;
   $("end").hidden = c.endHidden;
   $("end").disabled = s.busy || localBusy || s.state === "pausing";
+  $("source").disabled = c.locked || s.busy || localBusy;
+  $("source").value = s.source || "dtrpg";
+  $("websiteCookie").placeholder = s.websiteHost || "www.drivethrurpg.com";
+  $("apiCookie").placeholder = s.apiHost || "api.drivethrurpg.com";
+  if (sourceChanged) {
+    $("testID").value = s.probeID || 584455;
+    $("websiteCookie").value = "";
+    $("apiCookie").value = "";
+    page = 0;
+    $("errors").replaceChildren();
+    if ($("activity").open) loadErrors();
+    $("connections").open = !s.connectionReady;
+  }
   $("mode").disabled = c.locked || s.busy || localBusy;
   $("covers").disabled = c.locked || s.busy || localBusy;
   $("coverOnly").disabled = c.coverDisabled;
@@ -55,6 +74,7 @@ function render(s) {
     s.phase === "discover" ? "—" : Number(s.queued || 0).toLocaleString();
   $("catalogued").textContent = Number(s.catalogued || 0).toLocaleString();
   $("phase").textContent = labels[s.state] || "Getting ready";
+  if (s.state === "completed" && s.metadataWarnings) $("phase").textContent = "Crawl complete with metadata warnings";
   $("count").textContent = p.count;
   $("progress").max = p.max || 1;
   if (p.indeterminate) $("progress").removeAttribute("value");
@@ -81,6 +101,8 @@ function render(s) {
   $("retryNote").textContent = s.run
     ? "End this run before starting a separate retry of failed products."
     : "";
+  $("metadataNotice").hidden = !(s.metadataWarnings || s.metadataFailures);
+  $("metadataNotice").textContent = `${Number(s.metadataWarnings || 0).toLocaleString()} products have metadata warnings; ${Number(s.metadataFailures || 0).toLocaleString()} need extraction repair. Review Data maintenance. Original responses are saved.`;
   if (
     (s.state === "setup" || s.state === "blocked_auth") &&
     lastState !== s.state
@@ -89,7 +111,38 @@ function render(s) {
   if (!s.storageReady) $("storage").open = true;
   if (lastState !== s.state && $("activity").open) loadErrors();
   lastState = s.state;
+  if (s.loadingError !== priorLoadingError && (s.loadingError || priorLoadingError)) message(s.loadingError || "");
+  renderLoading(s);
 }
+function renderLoading(s) {
+  const closing = s.closing || abortRequested, visible = s.loading || closing;
+  const dialog = $("loadingDialog"), content = $("appContent");
+  if (visible && !overlayVisible) previousFocus = document.activeElement;
+  $("loadingOverlay").hidden = !visible;
+  content.toggleAttribute("inert", Boolean(visible));
+  content.setAttribute("aria-busy", String(Boolean(visible)));
+  text("loadingTitle", closing ? "Closing Nekonomicon" : s.migrating ? "Upgrading your catalog" : "Opening your catalog");
+  text("loadingMessage", closing ? "Waiting for database work to stop safely…" : s.loadingMessage || "Preparing local storage…");
+  text("loadingHint", closing ? "The app will close after local storage is safely closed. This may take a moment." : "Large catalogs can take a while. Abort and close cancels unfinished work and exits the app.");
+  $("abortLoading").disabled = Boolean(closing);
+  $("abortLoading").textContent = closing ? "Closing…" : "Abort and close";
+  if (visible && (!dialog.contains(document.activeElement) || document.activeElement?.disabled)) {
+    (closing ? dialog : $("abortLoading")).focus();
+  } else if (!visible && overlayVisible) {
+    const target = previousFocus?.isConnected && !previousFocus.disabled ? previousFocus : $("primary").disabled ? $("chooseFolder") : $("primary");
+    target.focus();
+    previousFocus = null;
+  }
+  overlayVisible = Boolean(visible);
+}
+document.addEventListener("keydown", (event) => {
+  if (!overlayVisible) return;
+  if (event.key === "Escape") event.preventDefault();
+  if (event.key === "Tab") {
+    event.preventDefault();
+    ($("abortLoading").disabled ? $("loadingDialog") : $("abortLoading")).focus();
+  }
+});
 async function invoke(action) {
   if (localBusy) return;
   message("");
@@ -106,7 +159,9 @@ async function invoke(action) {
 }
 async function loadErrors() {
   try {
+    const source = state.source, requestedPage = page;
     const items = await api.Failures(page * 50);
+    if (source !== state.source || requestedPage !== page) return;
     $("errors").replaceChildren();
     for (const f of items) {
       const li = document.createElement("li"),
@@ -142,6 +197,7 @@ function containers() {
   }
 }
 if (!api) {
+  renderLoading({});
   message(
     "Open this screen in the Nekonomicon desktop application. The static file cannot crawl.",
   );
@@ -149,6 +205,18 @@ if (!api) {
     .querySelectorAll("button,input,select")
     .forEach((el) => (el.disabled = true));
 } else {
+  $("abortLoading").onclick = async () => {
+    if (abortRequested || state.closing) return;
+    abortRequested = true;
+    render(state);
+    try {
+      await api.AbortAndClose();
+    } catch (err) {
+      abortRequested = false;
+      render(await api.Snapshot());
+      message(String(err));
+    }
+  };
   $("primary").onclick = () =>
     invoke(() =>
       state.running
@@ -157,6 +225,11 @@ if (!api) {
           ? api.Resume()
           : api.Start($("mode").value, $("covers").checked),
     );
+  $("source").onchange = async () => {
+    const source = $("source").value;
+    await invoke(() => api.SelectSource(source));
+    if (!$("source").disabled) $("source").focus();
+  };
   $("end").onclick = () => invoke(() => api.End());
   $("coverOnly").onclick = () => invoke(() => api.Start("covers", false));
   $("retry").onclick = () =>

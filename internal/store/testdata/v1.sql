@@ -1,0 +1,7 @@
+
+CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,mode TEXT NOT NULL CHECK(mode IN ('new','refresh','retry','covers')),phase TEXT NOT NULL,state TEXT NOT NULL,started_at TEXT NOT NULL,finished_at TEXT,download_covers INTEGER NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_run ON runs((1)) WHERE finished_at IS NULL;
+CREATE TABLE IF NOT EXISTS products(source TEXT NOT NULL CHECK(source='dtrpg'),product_id INTEGER NOT NULL CHECK(product_id>0),fetched_at TEXT NOT NULL,last_success_run_id TEXT NOT NULL REFERENCES runs(id),response_json TEXT NOT NULL CHECK(json_valid(response_json)),PRIMARY KEY(source,product_id));
+CREATE TABLE IF NOT EXISTS failures(source TEXT NOT NULL CHECK(source='dtrpg'),product_id INTEGER NOT NULL CHECK(product_id>0),phase TEXT NOT NULL CHECK(phase IN ('product','cover')),run_id TEXT NOT NULL REFERENCES runs(id),kind TEXT NOT NULL,http_status INTEGER,message TEXT NOT NULL,attempted_at TEXT NOT NULL,PRIMARY KEY(source,product_id,phase));
+CREATE TABLE IF NOT EXISTS covers(source TEXT NOT NULL CHECK(source='dtrpg'),product_id INTEGER NOT NULL CHECK(product_id>0),source_url TEXT NOT NULL,relative_path TEXT NOT NULL,downloaded_at TEXT NOT NULL,PRIMARY KEY(source,product_id));
+PRAGMA user_version=1;

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Rainbows4Blood/Nekonomicon/internal/auth"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 )
 
 type Entry struct {
@@ -17,9 +17,10 @@ type Entry struct {
 	Sitemap           bool
 }
 
-func SitemapURL(raw string) string {
+func SitemapURL(raw string, sources ...storefront.Source) string {
+	source := storefront.Default(sources...)
 	u, e := url.Parse(raw)
-	if e != nil || !auth.Approved(u) || u.Host == "api.drivethrurpg.com" {
+	if e != nil || !source.WebsiteURL(u) {
 		return ""
 	}
 	p := strings.ToLower(u.Path)
@@ -147,7 +148,7 @@ func (n *Network) DiscoverWithState(ctx context.Context, state *DiscoveryState, 
 	if !state.initialized {
 		state.fallback = len(roots) == 0
 		if state.fallback {
-			roots = []string{auth.Website + "sitemap.xml"}
+			roots = []string{n.Source().Website() + "sitemap.xml"}
 		}
 		state.known = map[string]bool{}
 		state.ids = map[int64]bool{}
@@ -186,12 +187,12 @@ func (n *Network) DiscoverWithState(ctx context.Context, state *DiscoveryState, 
 		var children []string
 		for _, x := range entries {
 			if x.Sitemap {
-				u := SitemapURL(x.Location)
+				u := SitemapURL(x.Location, n.Source())
 				if u == "" {
 					return nil, Fail("discovery", "Sitemap index points outside approved scope")
 				}
 				children = append(children, u)
-			} else if id := ProductID(x.Location); id > 0 {
+			} else if id := ProductID(x.Location, n.Source()); id > 0 {
 				state.ids[id] = true
 			}
 		}

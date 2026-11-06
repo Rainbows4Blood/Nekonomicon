@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Rainbows4Blood/Nekonomicon/internal/auth"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 	"github.com/temoto/robotstxt"
 )
 
@@ -24,6 +25,7 @@ type policy struct {
 	next  time.Time
 }
 type Network struct {
+	source          storefront.Source
 	Client          *http.Client
 	Attempts        int
 	mu              sync.Mutex
@@ -43,11 +45,13 @@ func (n *Network) BeginRun(id string) {
 	}
 }
 
-func NewNetwork(c auth.Cookies, transport http.RoundTripper) *Network {
+func (n *Network) Source() storefront.Source { return n.source }
+
+func NewNetwork(c auth.Cookies, transport http.RoundTripper, sources ...storefront.Source) *Network {
 	if transport == nil {
 		transport = &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, MaxIdleConns: 24, MaxIdleConnsPerHost: 12, MaxConnsPerHost: 12, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 20 * time.Second}
 	}
-	return &Network{Client: &http.Client{Transport: transport, Timeout: 45 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, Attempts: 3, cookies: c, policies: map[string]*policy{}}
+	return &Network{source: storefront.Default(sources...), Client: &http.Client{Transport: transport, Timeout: 45 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, Attempts: 3, cookies: c, policies: map[string]*policy{}}
 }
 func (n *Network) Replace(c auth.Cookies) {
 	n.mu.Lock()
@@ -183,7 +187,7 @@ func (n *Network) once(ctx, starts context.Context, raw string, product int64, l
 		if cover {
 			return u.Scheme == "https" && u.Host == "d1vzi28wh99zvq.cloudfront.net" && u.User == nil
 		}
-		return auth.Approved(u)
+		return n.Source().Approved(u)
 	}
 	if !approved(original) {
 		return Response{}, Fail("scope", "Unapproved request origin")
@@ -206,7 +210,7 @@ func (n *Network) once(ctx, starts context.Context, raw string, product int64, l
 		}
 		if !cover {
 			n.mu.Lock()
-			h := n.cookies.Header(u)
+			h := n.cookies.Header(u, n.Source())
 			n.mu.Unlock()
 			if h != "" {
 				req.Header.Set("Cookie", h)
@@ -285,7 +289,7 @@ func (n *Network) Robots(ctx context.Context) ([]string, error) {
 	n.policies = map[string]*policy{}
 	n.mu.Unlock()
 	var maps []string
-	for _, origin := range []string{auth.Website, auth.API} {
+	for _, origin := range []string{n.Source().Website(), n.Source().API()} {
 		r, e := n.Get(ctx, origin+"robots.txt", 0, 1<<20, true, false)
 		if e != nil && FailureOf(e).Kind != "missing" {
 			return nil, e
@@ -306,7 +310,7 @@ func (n *Network) Robots(ctx context.Context) ([]string, error) {
 		for _, line := range strings.Split(body, "\n") {
 			k, v, ok := strings.Cut(strings.Split(line, "#")[0], ":")
 			if ok && strings.EqualFold(strings.TrimSpace(k), "sitemap") {
-				if u := SitemapURL(strings.TrimSpace(v)); u != "" {
+				if u := SitemapURL(strings.TrimSpace(v), n.Source()); u != "" {
 					maps = append(maps, u)
 				}
 			}
@@ -381,10 +385,10 @@ func (n *Network) Test(ctx context.Context, id int64) error {
 	if _, e := n.Robots(ctx); e != nil {
 		return e
 	}
-	if _, e := n.Get(ctx, auth.Website, 0, ProductLimit, false, false); e != nil {
+	if _, e := n.Get(ctx, n.Source().Website(), 0, ProductLimit, false, false); e != nil {
 		return e
 	}
-	r, e := n.Get(ctx, ProductURL(id), id, ProductLimit, false, false)
+	r, e := n.Get(ctx, n.Source().ProductURL(id), id, ProductLimit, false, false)
 	if e != nil {
 		return e
 	}

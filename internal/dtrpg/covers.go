@@ -16,6 +16,8 @@ import (
 	"strings"
 
 	_ "golang.org/x/image/webp"
+
+	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 )
 
 func ImageURL(path string) (string, error) {
@@ -85,7 +87,11 @@ func ImageExtension(b []byte, contentType string) (string, error) {
 
 // SaveCover writes and syncs beside the destination, then atomically replaces
 // it. A failed transfer or rename leaves the previous file untouched.
-func SaveCover(root string, id int64, source string, b []byte, contentType string) (string, error) {
+func SaveCover(root string, id int64, source string, b []byte, contentType string, sources ...storefront.Source) (string, error) {
+	store := storefront.Default(sources...)
+	if !store.Valid() {
+		return "", Fail("scope", "Unknown storefront")
+	}
 	if id <= 0 || len(b) > CoverLimit {
 		return "", Fail("cover", "Invalid cover size or product ID")
 	}
@@ -94,7 +100,7 @@ func SaveCover(root string, id int64, source string, b []byte, contentType strin
 		return "", e
 	}
 	sum := sha256.Sum256([]byte(source))
-	relative := filepath.Join("covers", "dtrpg", fmt.Sprint(id), fmt.Sprintf("%x%s", sum[:16], ext))
+	relative := filepath.Join("covers", string(store), fmt.Sprint(id), fmt.Sprintf("%x%s", sum[:16], ext))
 	dest := filepath.Join(root, relative)
 	if e = os.MkdirAll(filepath.Dir(dest), 0700); e != nil {
 		return "", Fail("storage", "Cannot create cover folder; check free space and permissions")
@@ -135,5 +141,5 @@ func (n *Network) DownloadCover(ctx, starts context.Context, root string, id int
 	if e != nil {
 		return "", e
 	}
-	return SaveCover(root, id, source, r.Body, r.Type)
+	return SaveCover(root, id, source, r.Body, r.Type, n.Source())
 }

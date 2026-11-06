@@ -10,6 +10,7 @@ import (
 	"github.com/Rainbows4Blood/Nekonomicon/internal/auth"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/dtrpg"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/store"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 	"os"
 	"sort"
 	"time"
@@ -19,17 +20,22 @@ func main() {
 	profile := flag.String("profile", "", "Firefox profile name (required)")
 	live := flag.Bool("live", false, "allow the bounded live check")
 	covers := flag.Bool("covers", false, "also check at most 3 primary covers after saving products")
+	source := flag.String("source", "dtrpg", "storefront: dtrpg or dmsguild")
 	flag.Parse()
+	if !storefront.Source(*source).Valid() {
+		fmt.Fprintln(os.Stderr, "Unknown storefront")
+		os.Exit(2)
+	}
 	if !*live || *profile == "" {
 		fmt.Fprintln(os.Stderr, "Use -live -profile NAME: at most 8 sitemaps, 1 connection product and 3 discovered products")
 		os.Exit(2)
 	}
-	if err := run(*profile, *covers); err != nil {
+	if err := run(*profile, *covers, storefront.Source(*source)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
-func run(name string, covers bool) error {
+func run(name string, covers bool, source storefront.Source) error {
 	var p *auth.Profile
 	for _, v := range auth.Profiles() {
 		if v.Name == name {
@@ -41,7 +47,7 @@ func run(name string, covers bool) error {
 	if p == nil {
 		return fmt.Errorf("Firefox profile not found")
 	}
-	cookies, warnings, err := auth.Import(*p, 0)
+	cookies, warnings, err := auth.Import(*p, 0, source)
 	if err != nil {
 		return err
 	}
@@ -49,11 +55,11 @@ func run(name string, covers bool) error {
 		fmt.Println(w)
 	}
 	fmt.Printf("Imported %d scoped cookies (values withheld)\n", len(cookies.Imported))
-	n := dtrpg.NewNetwork(cookies, nil)
+	n := dtrpg.NewNetwork(cookies, nil, source)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	start := time.Now()
-	if err = n.Test(ctx, 584455); err != nil {
+	if err = n.Test(ctx, source.ProbeID()); err != nil {
 		return err
 	}
 	fmt.Printf("Website/API connection passed in %s\n", time.Since(start).Round(time.Millisecond))
@@ -63,7 +69,7 @@ func run(name string, covers bool) error {
 	}
 	if len(queue) == 0 {
 		fmt.Println("Robots declares no approved sitemaps; using the verified /sitemap.xml fallback with robots policy enforced")
-		queue = []string{auth.Website + "sitemap.xml"}
+		queue = []string{source.Website() + "sitemap.xml"}
 	}
 	seen := map[string]bool{}
 	ids := map[int64]bool{}
@@ -85,12 +91,12 @@ func run(name string, covers bool) error {
 		var children []string
 		for _, x := range entries {
 			if x.Sitemap {
-				u := dtrpg.SitemapURL(x.Location)
+				u := dtrpg.SitemapURL(x.Location, source)
 				if u == "" {
 					return fmt.Errorf("Unapproved sitemap index entry")
 				}
 				children = append(children, u)
-			} else if id := dtrpg.ProductID(x.Location); id > 0 {
+			} else if id := dtrpg.ProductID(x.Location, source); id > 0 {
 				ids[id] = true
 				if len(ids) == 3 {
 					break
@@ -113,7 +119,7 @@ func run(name string, covers bool) error {
 		return err
 	}
 	defer s.Close()
-	run := store.Run{ID: "smoke", Mode: "refresh", Phase: "fetch", State: "fetching", Started: time.Now().UTC().Format(time.RFC3339Nano)}
+	run := store.Run{Source: source, ID: "smoke", Mode: "refresh", Phase: "fetch", State: "fetching", Started: time.Now().UTC().Format(time.RFC3339Nano)}
 	if err = s.CreateRun(run); err != nil {
 		return err
 	}
@@ -127,7 +133,7 @@ func run(name string, covers bool) error {
 		url string
 	}
 	for _, id := range sorted {
-		r, err := n.Get(ctx, dtrpg.ProductURL(id), id, dtrpg.ProductLimit, false, false)
+		r, err := n.Get(ctx, source.ProductURL(id), id, dtrpg.ProductLimit, false, false)
 		if err != nil {
 			return err
 		}
@@ -141,7 +147,7 @@ func run(name string, covers bool) error {
 		if err != nil {
 			return fmt.Errorf("Temporary catalog commit failed")
 		}
-		saved, err := s.Response(id)
+		saved, err := s.Response(id, source)
 		if err != nil || !bytes.Equal(saved, r.Body) {
 			return fmt.Errorf("Stored response did not survive unchanged")
 		}

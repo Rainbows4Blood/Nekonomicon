@@ -36,6 +36,8 @@ type Snapshot struct {
 	Saved             int        `json:"saved"`
 	Eligible          int        `json:"eligible"`
 	ProductErrors     int        `json:"productErrors"`
+	MetadataWarnings  int        `json:"metadataWarnings"`
+	MetadataFailures  int        `json:"metadataFailures"`
 	CoverErrors       int        `json:"coverErrors"`
 	Found             int        `json:"found"`
 	Sitemaps          int        `json:"sitemaps"`
@@ -64,16 +66,22 @@ type Engine struct {
 }
 
 func New(s *store.Store, n *dtrpg.Network, c Config) (*Engine, error) {
+	return NewContext(context.Background(), s, n, c)
+}
+func NewContext(ctx context.Context, s *store.Store, n *dtrpg.Network, c Config) (*Engine, error) {
 	if c.Workers < 1 || c.Workers > 32 || c.CoverWorkers < 1 || c.CoverWorkers > 16 || c.BatchCount < 1 || c.BatchCount > 1000 || c.BatchBytes < dtrpg.ProductLimit || c.BatchBytes > 32<<20 || c.FlushInterval <= 0 || c.FlushInterval > 2*time.Second {
 		return nil, errors.New("Invalid engine limits")
 	}
-	stats, e := s.Stats()
+	stats, e := s.StatsContext(ctx, n.Source())
 	if e != nil {
 		return nil, e
 	}
-	run, e := s.Active()
+	run, e := s.ActiveContext(ctx)
 	if e != nil {
 		return nil, e
+	}
+	if run != nil && run.Source != n.Source() {
+		return nil, errors.New("Resume or end the other storefront run first")
 	}
 	v := Snapshot{State: "setup", Message: "Import cookies and test the connection to start.", Catalogued: stats.Products, CataloguedCovers: stats.Covers, Run: run}
 	if run != nil {
@@ -83,7 +91,11 @@ func New(s *store.Store, n *dtrpg.Network, c Config) (*Engine, error) {
 		if run.Phase == "covers" {
 			v.Message = "Resume to check saved covers and download missing or changed images."
 		}
-		v.Saved, v.ProductErrors, e = s.RunCounts(run.ID)
+		v.Saved, v.ProductErrors, e = s.RunCountsContext(ctx, run.ID)
+		if e != nil {
+			return nil, e
+		}
+		v.MetadataWarnings, v.MetadataFailures, e = s.RunMetadataCounts(ctx, run.ID)
 		if e != nil {
 			return nil, e
 		}
@@ -146,7 +158,7 @@ func (e *Engine) Start(mode string, covers bool) error {
 	if mode == "covers" {
 		phase = "covers"
 	}
-	run := store.Run{ID: fmt.Sprintf("%x", b), Mode: mode, Phase: phase, State: "starting", Started: time.Now().UTC().Format(time.RFC3339Nano), Covers: covers}
+	run := store.Run{Source: e.net.Source(), ID: fmt.Sprintf("%x", b), Mode: mode, Phase: phase, State: "starting", Started: time.Now().UTC().Format(time.RFC3339Nano), Covers: covers}
 	if err := e.store.CreateRun(run); err != nil {
 		e.snapshot.State = "blocked_storage"
 		e.snapshot.Message = "Cannot start a run in this data folder. Check space and permissions."
@@ -251,7 +263,9 @@ func (e *Engine) Wait(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-func (e *Engine) Failures(offset int) ([]store.Failure, error) { return e.store.Failures(offset, 50) }
+func (e *Engine) Failures(offset int) ([]store.Failure, error) {
+	return e.store.Failures(offset, 50, e.net.Source())
+}
 
 func (e *Engine) setPhase(run *store.Run, phase, state, message string) error {
 	if err := e.store.UpdateRun(run.ID, phase, state, false); err != nil {
@@ -293,7 +307,7 @@ func (e *Engine) execute(hard, starts context.Context, run store.Run) {
 			finished = true
 		}
 		v := e.Snapshot()
-		if state == "completed" && (v.ProductErrors > 0 || v.CoverErrors > 0) {
+		if state == "completed" && (v.ProductErrors > 0 || v.CoverErrors > 0 || v.MetadataFailures > 0) {
 			state = "completed_errors"
 			message = "Finished with errors. Successful records and covers are saved."
 		}
@@ -361,9 +375,15 @@ func (e *Engine) execute(hard, starts context.Context, run store.Run) {
 			err = dtrpg.Fail("storage", "Could not read run progress")
 			return
 		}
+		warned, metadataFailed, countErr := e.store.RunMetadataCounts(starts, run.ID)
+		if countErr != nil {
+			err = dtrpg.Fail("storage", "Could not read metadata progress")
+			return
+		}
 		e.change(func(s *Snapshot) {
 			s.Saved = saved
 			s.ProductErrors = failed
+			s.MetadataWarnings, s.MetadataFailures = warned, metadataFailed
 			s.Eligible = len(ids) + saved + failed
 			s.Queued = len(ids)
 		})
@@ -409,6 +429,8 @@ func (e *Engine) flush(runID, phase string, start time.Time) error {
 		s.Catalogued += v.Added
 		s.CataloguedCovers += v.AddedCovers
 		s.Saved += v.Products
+		s.MetadataWarnings += v.MetadataWarnings
+		s.MetadataFailures += v.MetadataFailures
 		s.CoverSaved += v.Covers
 		if phase == "covers" || phase == "cover" {
 			s.CoverErrors += v.Failures
@@ -441,7 +463,7 @@ func (e *Engine) fetch(hard, starts context.Context, run store.Run, ids []int64,
 		go func() {
 			defer wg.Done()
 			for id := range jobs {
-				r, err := e.net.GetForRun(hard, starts, dtrpg.ProductURL(id), id, dtrpg.ProductLimit, false, false)
+				r, err := e.net.GetForRun(hard, starts, e.net.Source().ProductURL(id), id, dtrpg.ProductLimit, false, false)
 				o := outcome{result: store.Result{ID: id}, err: err, http: r.Duration}
 				if err == nil {
 					decode := time.Now()
@@ -599,7 +621,7 @@ func (e *Engine) covers(hard, starts context.Context, run store.Run, start time.
 				scanDone <- starts.Err()
 				return
 			}
-			page, err := e.store.CoverPage(after)
+			page, err := e.store.CoverPage(after, e.net.Source())
 			if err != nil {
 				scanDone <- dtrpg.Fail("storage", "Could not scan saved products for covers")
 				return

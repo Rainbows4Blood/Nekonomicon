@@ -4,6 +4,100 @@ The DTRPG acceptance checks are complete as of 2026-11-01. This file records
 their evidence and limits; the standalone HTML mockup remains illustrative.
 The production application is the Go/Wails executable with assets in frontend/.
 
+## Migration loading and shutdown — 2026-11-05
+
+Startup and folder changes now open the catalog on a background Go worker.
+The app mutex protects short state updates; it is not held while SQLite copies
+responses, rolls back, commits, or counts saved products. Snapshot/event delivery
+therefore remains responsive. Loading is visible from the initial HTML, and the
+4 Hz event pump starts asynchronously once Wails reports DOM readiness.
+
+The blocking overlay shows coarse migration stages and supports keyboard focus,
+screen-reader announcements, and reduced motion. Its Abort and close action
+bypasses the normal busy-action gate. Window close uses the same lifecycle:
+request cancellation, wait for the open worker and explicit transaction rollback,
+close the active engine/database, release the writer lock, and ask Wails to quit.
+A commit already in progress settles before shutdown, so a successfully committed
+upgrade is retained. Rollback/close may take time; the UI stays in Closing until
+cleanup finishes. No force-kill or detached backend process is used.
+
+Schema version and migration contents are unchanged by this UI/lifecycle work.
+Context-aware operations cover opening pragmas, schema queries, migration SQL and
+catalog counts. Tests cancel before copying, during a synthetic product-table
+copy, after a copied table, and immediately before commit; they verify v1 schema
+and bytes remain intact and the writer lock can be reacquired. App tests verify
+responsive snapshots, blocked mutations, both abort/close routes, repeated close
+requests, cleanup-before-quit ordering, successful opening, and failed folder
+switches preserving the previous catalog. Renderer checks cover the overlay,
+error dismissal and duplicate-abort gating. Chromium checks cover 1100/390/360 px,
+keyboard trapping, Escape behavior and reduced motion. Native window/process
+interaction was not repeated; the Wails quit handoff is covered by an injected
+callback that asserts cleanup has completed.
+
+Windows Go tests/vet, frontend checks and Wails build pass; Linux race tests,
+vet and Wails build pass with WebKitGTK 4.1. Builds use separate filenames
+(`Nekonomicon-loading.exe` / `Nekonomicon-loading-linux`) to avoid replacing the
+user’s running executable. The running app and live catalog were not touched.
+
+## DM’s Guild expansion — 2026-11-05
+
+The user authorized the second storefront after the DTRPG acceptance gate.
+Both stores use the existing three-phase engine and one catalog writer. There
+is no plugin registry or additional storefront placeholder. A native selector
+switches stores while idle; active and paused runs keep their original source.
+Opening an unfinished catalog selects that run’s source automatically.
+
+DM’s Guild uses `https://api.dmsguild.com/api/vBeta/products/{id}` without the
+DTRPG `groupId=1&siteId=10` query. The observed endpoint returns the supported
+JSON:API envelope, including `included`. Its website/API cookies, first-party
+partition and encrypted session file/key are separate. Switching clears manual
+inputs and requires a fresh connection check. Requests, sitemap links and
+redirects cannot cross storefronts; cover requests carry no cookies.
+
+Live smoke on Windows imported seven scoped cookies from the existing Firefox
+default-release profile. Website/API validation passed in 2.222 s. Robots omitted
+sitemap declarations; the fixed `https://www.dmsguild.com/sitemap.xml` fallback
+was verified. Three sitemap reads yielded sample products 557, 624 and 662.
+Their complete responses (104,987 / 74,484 / 57,652 bytes) survived temporary
+SQLite storage byte-for-byte, and all three primary covers validated and saved
+atomically. Product HTTP took 1.076 / 0.659 / 0.724 s; commits took 2.137 / 1.569 /
+1.573 ms. No full crawl ran. The smoke command removed its temporary catalog
+and covers; authenticated response dumps and credentials were not retained.
+Unauthenticated website requests encountered a browser challenge; the imported
+session passed through the ordinary request path without bypassing it.
+
+Schema v2 adds source to runs and allows both sources in product/failure/cover
+keys. Existing v1 runs become DTRPG runs. Migration copies the three constrained
+tables inside one transaction, preserving response bytes and cover paths. It
+requires extra disk space and may take time for a large catalog; a failed upgrade
+rolls back and displays a retry diagnostic. Older binaries reject schema v2.
+The migration does not copy or move cover files. Product counts, new/refresh/
+retry eligibility, failure clearing and cover scans stay scoped to their source.
+
+New regression coverage includes overlapping product IDs, source-specific
+counts/errors/covers, new/refresh/cover passes in the same catalog, wrong-source
+resume rejection, unfinished-run startup selection, source-switch gating,
+Firefox and redirect isolation, and v1 migration rollback/retry. The production
+renderer tests cover all run states and source-dependent hints/cleared fields.
+Headless Chromium inspection checked 1100-, 430- and 360-pixel layouts, no
+horizontal overflow, and keyboard storefront switching/focus. Native windows
+were not re-inspected for this expansion.
+
+Windows Go tests/vet, frontend checks and production Wails build pass. Ubuntu
+WSL2 tests with race instrumentation and `webkit2_41`, vet, and the Linux Wails
+build pass; Linux used `-s` to embed the same frontend assets checked on Windows.
+The existing generated-TypeScript `store.Run` warning remains; the application
+uses the JavaScript bridge. Live authentication was checked on Windows only.
+
+Storage-only measurement after this change: Windows amd64, Go 1.27.1, AMD Ryzen
+AI 7 350, temporary local C: database, 1,000 distinct rows using the 40,197-byte
+supplied fixture, batches of up to 800, schema v2 primary keys and the global
+unfinished-run index, WAL / synchronous=NORMAL. `BenchmarkStorage` measured
+701,710 ns/record, 57.28 MB/s, 46,196 allocated bytes/record and 117 allocations/
+record. This includes transactional writes and source lookup, excludes startup,
+v1 migration, HTTP and covers, and is a single offline measurement rather than a
+live throughput claim. Earlier measurements below used different batch totals.
+
 ## Protocol and authentication
 
 Ported the fixed Firefox 158 User-Agent, Accept/Accept-Encoding headers, scoped
@@ -176,3 +270,55 @@ The restricted execution sandbox could not resolve some Go standard-library
 packages; the checks above ran successfully outside that sandbox. No full live
 crawl was started for UI validation. Offline timing and heap measurements do
 not predict Internet throughput or total process resident memory.
+
+## Metadata and maintenance verification — 2026-11-06
+
+Schema v3 adds fixed product metadata mappings and product-scoped child tables.
+Desktop opening uses `store.InspectContext`, which never creates a database or
+runs schema/transformation work. `store.Open`/`OpenContext` remain explicit
+initialization helpers for the CLI measurements and temporary test fixtures;
+they are not the desktop opening path. The maintenance UI separately invokes
+schema upgrade and extraction. The original JSON and local covers are retained.
+
+The full Go suite and vet pass on Windows, including conservative scalar
+conversion, exact decimal/integer precision, sparse integration objects,
+JSON:API/flat equivalence, bounded diagnostics, unknown/malformed fields,
+raw/derived rollback, stale-data exclusion, old transformation eligibility,
+maintenance/crawl exclusion, pause/shutdown, persisted cursor recovery, source
+isolation, and inspection without initialization or automatic migration.
+Frontend syntax and renderer tests pass, including explicit schema gating,
+committed progress, paused ownership and safe issue rendering. Headless Edge
+checks of the production frontend passed at 980 px and 390 px for all
+maintenance states, horizontal overflow, and keyboard tab navigation. These
+checks use synthetic Wails snapshots; they are not a native desktop run.
+The Windows Wails production build passes with the previously documented
+`Not found: store.Run` binding-generator warning.
+
+A bounded read-only check of the existing catalog projected 256 DTRPG and 187
+DM's Guild responses through the new extractor, with zero extraction failures
+or warnings in that sample. No raw responses were exported, no authenticated
+fixtures were added, no remote requests were sent, and the user's database was
+not upgraded or backfilled. Synthetic tests cover the known rare exceptions.
+
+Storage-only measurement: Windows 11 Pro 10.0.26300, AMD Ryzen AI 7 350 (16
+logical CPUs), Go 1.27.1, temporary local SQLite catalog, WAL/synchronous=NORMAL,
+all schema-v3 primary-key indexes and the existing single-active-run index.
+`go test ./internal/store -run '^$' -bench BenchmarkStorage -benchtime=200x -benchmem`
+measured 2.113 ms per record (19.02 MB/s), using 200 distinct products derived
+from the 40,197-byte supplied fixture with matching product IDs. This includes
+JSON projection, all derived inserts and the raw write; it excludes HTTP and
+covers. The benchmark now checks that extraction succeeded rather than timing
+only the failure path with mismatched synthetic IDs. This small synthetic run
+is not a full-catalog performance prediction.
+
+`go run ./cmd/measure -count 200` completed the local-test-server pipeline with
+200 saved products and 200 covers in 0.633 s, including 0.477 s in commits and
+18.8 MB peak sampled Go heap (not process RSS). It includes discovery, local
+HTTP, validation, metadata projection, SQLite, cover download and atomic file
+writes; it excludes Internet latency, Firefox import and desktop rendering.
+The fixture's repeated taxonomy is less diverse than the real catalog.
+
+WSL/Linux Go 1.27.1 race checks also pass for metadata, store, maintenance and
+engine packages. Linux desktop build/native rendering were not rerun for this
+change. Maintenance snapshots remain readable during schema writes; schema
+version reads use an atomic value rather than waiting for the writer mutex.

@@ -10,15 +10,36 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 	"github.com/zalando/go-keyring"
 )
 
 // Vault keeps ciphertext outside catalog data; its encryption key lives in the OS
 // credential manager (Windows Credential Manager / Linux Secret Service).
-type Vault struct{ Dir string }
+type Vault struct {
+	Dir    string
+	Source storefront.Source
+}
+
+func (v Vault) source() storefront.Source { return storefront.Default(v.Source) }
+func (v Vault) filename() string {
+	if v.source() == storefront.DTRPG {
+		return "session.enc"
+	}
+	return "session-" + string(v.source()) + ".enc"
+}
+func (v Vault) aad() []byte {
+	if v.source() == storefront.DTRPG {
+		return []byte("Nekonomicon DTRPG v1")
+	}
+	return []byte("Nekonomicon " + string(v.source()) + " v1")
+}
 
 func (v Vault) aead(create bool) (cipher.AEAD, error) {
-	text, e := keyring.Get("Nekonomicon", "dtrpg-cookie-key")
+	if !v.source().Valid() {
+		return nil, errors.New("Unknown storefront")
+	}
+	text, e := keyring.Get("Nekonomicon", string(v.source())+"-cookie-key")
 	if errors.Is(e, keyring.ErrNotFound) && create {
 		b := make([]byte, 32)
 		if _, e = rand.Read(b); e != nil {
@@ -26,7 +47,7 @@ func (v Vault) aead(create bool) (cipher.AEAD, error) {
 		}
 		text = base64.StdEncoding.EncodeToString(b)
 		clear(b)
-		e = keyring.Set("Nekonomicon", "dtrpg-cookie-key", text)
+		e = keyring.Set("Nekonomicon", string(v.source())+"-cookie-key", text)
 	}
 	if e != nil {
 		return nil, errors.New("OS credential storage unavailable; unlock your keyring and retry")
@@ -56,7 +77,7 @@ func (v Vault) Save(c Cookies) error {
 	if _, e = rand.Read(nonce); e != nil {
 		return e
 	}
-	encrypted := a.Seal(nonce, nonce, b, []byte("Nekonomicon DTRPG v1"))
+	encrypted := a.Seal(nonce, nonce, b, v.aad())
 	if e = os.MkdirAll(v.Dir, 0700); e != nil {
 		return e
 	}
@@ -79,10 +100,13 @@ func (v Vault) Save(c Cookies) error {
 	if e != nil {
 		return e
 	}
-	return os.Rename(tmp, filepath.Join(v.Dir, "session.enc"))
+	return os.Rename(tmp, filepath.Join(v.Dir, v.filename()))
 }
 func (v Vault) Load() (Cookies, error) {
-	b, e := os.ReadFile(filepath.Join(v.Dir, "session.enc"))
+	if !v.source().Valid() {
+		return Cookies{}, errors.New("Unknown storefront")
+	}
+	b, e := os.ReadFile(filepath.Join(v.Dir, v.filename()))
 	if e != nil {
 		return Cookies{}, e
 	}
@@ -96,7 +120,7 @@ func (v Vault) Load() (Cookies, error) {
 	if len(b) < a.NonceSize() {
 		return Cookies{}, errors.New("Invalid saved session")
 	}
-	p, e := a.Open(nil, b[:a.NonceSize()], b[a.NonceSize():], []byte("Nekonomicon DTRPG v1"))
+	p, e := a.Open(nil, b[:a.NonceSize()], b[a.NonceSize():], v.aad())
 	if e != nil {
 		return Cookies{}, errors.New("Saved session could not be decrypted")
 	}

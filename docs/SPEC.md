@@ -1,12 +1,12 @@
-# Nekonomicon v1 — DTRPG first
+# Nekonomicon — DriveThruRPG and DM’s Guild
 
 Status: implementation specification. This replaces the previous design entirely.
 
 ## 1. Goal and scope
 
-Build a slick, simple, fast local desktop crawler in Go/Wails. Collect DriveThruRPG product API responses and primary covers. The application runs on the user's Windows or Linux machine without a database server or object-storage service.
+Build a slick, simple, fast local desktop crawler in Go/Wails. Collect DriveThruRPG and DM’s Guild product API responses and primary covers. The application runs on the user's Windows or Linux machine without a database server or object-storage service.
 
-DTRPG must work before DMs Guild, Storytellers Vault, or Ulisses eBooks are implemented. No source selector or future-storefront placeholders in v1. No browsing/search/classification/enrichment system, cross-store deduplication, network storage, scheduler, or distributed architecture.
+The DTRPG gate passed on 2026-11-01; the user authorized DM’s Guild on 2026-11-05. Provide a selector for these two implemented storefronts only. Storytellers Vault and Ulisses eBooks remain deferred. No browsing/search/classification/enrichment system, cross-store deduplication, network storage, scheduler, or distributed architecture.
 
 ## 2. Three sequential phases
 
@@ -36,9 +36,23 @@ Reference files:
 
 These are behavioral references, not a requirement to copy the old queue/storage/parser architecture. Confirm the protocol with a small live authenticated smoke check during implementation; these endpoint details are observed code, not an external API guarantee.
 
+### DM’s Guild protocol (verified 2026-11-05)
+
+- Website: https://www.dmsguild.com/
+- API origin: https://api.dmsguild.com/
+- Product request: https://api.dmsguild.com/api/vBeta/products/{id} (no DTRPG groupId/siteId parameters).
+- Canonical product URL: https://www.dmsguild.com/en/product/{id}
+- Fixed fallback: https://www.dmsguild.com/sitemap.xml, verified with the scoped Firefox session.
+- The same approved CloudFront `/images/` base serves primary covers.
+
+The API returned the supported JSON:API envelope including `included`; full bytes
+are preserved. The compatibility headers, retry/classification rules and three
+phases are shared. Each source approves only its own website/API hosts and
+Firefox first-party partition. Never reuse one storefront’s cookies for the other.
+
 ## 4. Discovery
 
-Load robots.txt for website and API origins, preserving existing policy and header behavior. Extract declared Sitemap URLs. If there are no approved declarations, use the fixed, verified https://www.drivethrurpg.com/sitemap.xml entry point and visibly report this fallback. This exception was approved on 2026-11-01 after the live robots response omitted sitemap declarations and the legacy root yielded matching products. Robots rules still apply; do not guess other roots. Follow sitemapindex entries recursively; parse urlset product entries. Support plain XML, namespaces, escaped URLs, and gzip. Ignore extension entries such as image:loc. Validate XML completeness and enforce decoded-size limits.
+Load robots.txt for website and API origins, preserving existing policy and header behavior. Extract declared Sitemap URLs. If there are no approved declarations, use the fixed, verified `/sitemap.xml` entry point on the selected storefront website and visibly report this fallback. This exception was approved on 2026-11-01 after the live robots response omitted sitemap declarations and the legacy root yielded matching products. Robots rules still apply; do not guess other roots. Follow sitemapindex entries recursively; parse urlset product entries. Support plain XML, namespaces, escaped URLs, and gzip. Ignore extension entries such as image:loc. Validate XML completeness and enforce decoded-size limits.
 
 Maintain visited sitemap URLs and a deduplicated set of positive product IDs. Accept modern /product/{id}, localized /en/product/{id}, and legacy /product_info.php?products_id={id} forms supported by the old adapter. Language/slug variants resolve to one ID. Reject unrelated hosts and non-product URLs. Preserve optional lastmod as a hint only; v1 does not depend on it to skip updates.
 
@@ -53,32 +67,39 @@ A fresh process may rediscover sitemaps rather than persist an exact frontier. W
 - **Retry failed**: retry recorded product failures; no full sitemap pass needed. Cover failures belong to the cover pass.
 - **Download covers**: scan saved products for missing or changed primary covers; no product requests needed.
 
-Create a run ID and persist mode, start time, state, and covers preference. Record last_success_run_id on each product in the same transaction as its JSON. Resume an interrupted refresh using the same run ID and omit already-committed successes. A new run gets a new ID. Failures do not set this success marker.
+Create a run ID and persist storefront, mode, start time, state, and covers preference. Record last_success_run_id on each product in the same transaction as its JSON. Resume an interrupted refresh using the same run ID and omit already-committed successes. A new run gets a new ID. Failures do not set this success marker.
 
-Only one active run. If an unfinished run exists, show Resume and End run; do not silently start another. Ending a run keeps all committed data; a future refresh starts a new run. Resuming after a process restart rediscovers IDs where needed, so the source set can differ from the initial snapshot. Do not promise an immutable frontier or exact recovery of volatile progress counters.
+Only one active run across both storefronts. Storefront selection is locked until the run is ended or completed. Opening a catalog with an unfinished run selects its storefront; connection readiness is never transferred between sources. If an unfinished run exists, show Resume and End run; do not silently start another. Ending a run keeps all committed data; a future refresh starts a new run. Resuming after a process restart rediscovers IDs where needed, so the source set can differ from the initial snapshot. Do not promise an immutable frontier or exact recovery of volatile progress counters.
 
 Pause stops scheduling, lets bounded in-flight requests settle, flushes successful buffers, and then reports Paused. Resume continues that run. Stop/end flushes and closes the run when possible. Abrupt crash may lose the current buffer and queue state; replay is acceptable. Out-of-order worker completion must not skip unfinished IDs: never resume using the largest completed ID or a single frontier cursor.
 
 ## 6. Minimal SQLite model
 
-One local SQLite database. Use ordinary JSON TEXT containing the entire API response, including top-level data, relationships, and included. No normalized author/publisher/filter tables in v1. Do not transform and reserialize the response merely to store it.
+One local SQLite database. Use ordinary JSON TEXT containing the entire API response, including top-level data, relationships, and included. Derived metadata now lives in separate tables as authorized on 2026-11-06; see section 13. Do not transform and reserialize the response merely to store it.
 
 Suggested tables (implementation may refine types without expanding scope):
 
 | Table | Fields and constraints |
 | --- | --- |
 | products | source TEXT, product_id INTEGER, fetched_at UTC timestamp, last_success_run_id, response_json TEXT NOT NULL; primary key (source, product_id) |
-| runs | id primary key, mode, phase, state, started_at, finished_at nullable, download_covers |
+| runs | id primary key, source, mode, phase, state, started_at, finished_at nullable, download_covers |
 | failures | source, product_id, phase (product/cover), run_id, kind, HTTP status nullable, sanitized message, attempted_at; primary key (source, product_id, phase) |
 | covers | source, product_id, source_url, relative_path, downloaded_at; primary key (source, product_id) |
 
-Source is fixed to dtrpg in v1; the column costs little and keeps exports unambiguous. Product success removes the matching product failure within the same commit. Cover success clears its cover failure. Failure records are batched, not a write per retry. Errors must not overwrite good product JSON. Successful cover metadata refers to the successfully downloaded URL, not merely the latest requested one.
+Source is `dtrpg` or `dmsguild`. All catalog reads, eligibility checks, failures, and covers are scoped to the selected source; writes derive source from the persisted run. Schema v2 transactionally upgrades v1, retaining all rows and assigning existing runs to DTRPG. The single unfinished-run index remains global. Migration can require significant disk space/time for copying a large catalog; failure rolls back the upgrade. Product success removes the matching product failure within the same commit. Cover success clears its cover failure. Failure records are batched, not a write per retry. Errors must not overwrite good product JSON. Successful cover metadata refers to the successfully downloaded URL, not merely the latest requested one.
 
 Use WAL, one write owner, prepared upserts, a busy timeout, and short read transactions for UI queries. Use synchronous=NORMAL as the initial throughput-oriented setting: application-crash recovery remains valid, but a power/OS failure may lose recent committed transactions. Do not disable journaling or use synchronous=OFF. Explain that durability tradeoff in developer documentation, not as a setup obstacle.
 
 Start batch thresholds at 1,000 product results OR 32 MiB accumulated response bytes OR 2 seconds since the first buffered result, whichever comes first. Flush at pause/end/phase completion. These values are provisional and must be measured. All write batches use transactions; do not perform HTTP/file downloads within them. A failed commit is not reported as catalogued; stop scheduling on persistence failure and retain the buffer if practical.
 
 Database and runtime files live under an OS-appropriate application data directory. Permit choosing the data folder while idle; do not build a database configuration wizard. Protect the data folder against simultaneous app writers. Do not copy a live SQLite main file alone for export; a later exporter must use a consistent snapshot/backup operation.
+
+Opening runs outside the UI lock and only inspects compatibility. It never
+initializes, upgrades, or backfills a catalog. New/older catalogs remain open
+with crawling disabled and a clear Data maintenance action. Explicit schema
+updates run in the maintenance tab with stage-based progress and cancellation.
+Close waits for rollback or an already-started commit and connection cleanup.
+Failed folder switches keep the previous catalog open.
 
 ## 7. Fetching and response validation
 
@@ -108,15 +129,15 @@ Download if the file is missing or the desired URL differs from the last success
 
 ## 10. UI contract
 
-A single crawler screen, DTRPG only. Quiet desktop layout with compact identity header, explicit run-mode dropdown, optional Download covers after records, and one primary Start/Resume/Pause action. Connections and activity/errors expand in place. No storage-server setup, other storefront cards, catalog browser, or per-record animated log stream.
+Crawler and Data maintenance tabs with a shared native storefront selector (DriveThruRPG / DM’s Guild), locked during active or paused runs. Quiet desktop layout with compact identity header, explicit run-mode dropdown, optional Download covers after records, and one primary Start/Resume/Pause action. Connections and activity/errors expand in place. No storage-server setup, other storefront cards, catalog browser, or per-record animated log stream.
 
 States: setup/sign-in needed, ready, discovering, fetching, downloading covers, pausing, paused, completed, completed with errors, and blocked by authentication/storage failure. Show the phase prominently. Before discovery finishes, show IDs found/sitemaps processed without a fabricated percentage. Afterward, show known product workload and run outcomes.
 
 Queued means eligible product IDs not yet in flight. Catalogued means total distinct products successfully committed in the local catalog. For Refresh all, show run progress separately (saved this run / eligible total); catalogued may stay constant. Cover progress uses separate counts. Once failed attempts are exhausted they leave queued and appear as errors. A run with errors must not read as an unqualified success.
 
-Emit aggregated progress at most 4 times/second; maintain counters in Go instead of repeatedly counting whole tables. Throughput is committed products/second, with covers separately labeled. Keep errors bounded in memory and pageable from persisted failures. Enable retry actions only when idle/paused under a clear run transition. Start is blocked by unvalidated connection or unavailable local storage; cover-only work does not require DTRPG cookies when CDN access works independently.
+Emit aggregated progress at most 4 times/second; maintain counters in Go instead of repeatedly counting whole tables. Throughput is committed products/second, with covers separately labeled. Keep errors bounded in memory and pageable from persisted failures. Enable retry actions only when idle/paused under a clear run transition. Start is blocked by unvalidated connection or unavailable local storage; cover-only work does not require storefront cookies when CDN access works independently.
 
-The mockup is illustrative and never reads browser credentials or contacts DTRPG. Its demo state controls are not production application controls.
+The original DTRPG mockup is illustrative and never reads browser credentials or contacts a storefront. Its demo state controls are not production application controls.
 
 ## 11. Implementation sequence and acceptance gate
 
@@ -139,8 +160,71 @@ DTRPG is complete only when:
 - Windows/Linux build and smoke-test results are documented; unavailable platforms are explicitly noted.
 - A storage benchmark and a controlled end-to-end measurement report environment, concurrency, payload size, durability, HTTP timings, commit timings, and memory use. No unmeasured promise of 800 records/second.
 
-Only then consider the other storefronts. No work on them is required to finish this specification.
+This gate passed before the authorized DM’s Guild expansion. DM’s Guild uses the same recovery and isolation requirements; other storefronts remain out of scope.
 
 ## 12. Supplied example
 
 fixtures/dtrpg-product-584455.json is a complete user-supplied response (~40 KB). It contains data.attributes.productId=584455, image=23458/584455.png, webImage=23458/584455.webp, and included Publisher, Category, and Filter resources. It is a test/example payload, not a schema for all possible products. Use it to prove lossless storage and minimal extraction, not to require every optional field on other products.
+
+## 13. Structured metadata and explicit maintenance (2026-11-06)
+
+Every extension of the data model must include a shared transformation for new
+crawl responses and an explicit maintenance path for previously saved responses.
+Schema version and transformation version are separate. Opening the app performs
+neither structural updates nor transformations. Incompatible schemas block
+crawling; missing historical metadata does not block new crawling once the
+schema is compatible. A newer-than-supported schema requires a newer app.
+
+The Data maintenance tab offers two explicit actions: Apply database update and
+Extract metadata. Schema v3 adds the metadata tables to v2 without copying
+products. The prior transactional v1-to-v2 copy remains available through this
+explicit action. Initialization of an empty catalog is also explicit.
+
+`internal/metadata` defines the fixed field mappings and one shared extractor
+for flat responses and JSON:API responses with relationship-linked included
+resources. `product_metadata` stores product and publisher scalar fields.
+Separate product-scoped tables retain ordered creators, purchase options,
+files, taxonomy entries, translated taxonomy labels, ancestors, and repeated
+text values (description headers/footers, publisher URLs, integrations). All
+keys include storefront and product ID. No author identity is inferred from a
+name, and no cross-store deduplication occurs. Unknown additional fields, empty
+API placeholders, and account/session-oriented values remain in the full JSON.
+
+Extraction is conservative. Money is stored as exact decimal text without
+rounding or conversion; no source currency is invented. Future product views
+may display amounts as euros, per the user's display-only assumption. Page
+counts and ratings retain their original strings alongside safely parsed
+nullable values. Dates and opaque status codes retain their source encoding.
+HTML is retained as text and must be sanitized before any future rendering.
+The known sparse-object encoding of integration lists is handled in numeric
+key order. Diagnostics contain fixed field names and reasons, not remote values.
+
+Malformed individual fields produce bounded warnings while useful metadata is
+committed. Warning-only results are complete and are not repeatedly processed.
+A complete extraction failure still saves valid raw crawl JSON, records a
+separate extraction failure, and retains the last good derived data as stale.
+The `current_product_metadata` view excludes stale/failed/outdated projections.
+Storage failures roll back the entire batch, including raw data and markers.
+
+`metadata_state` tracks the extraction version, source response's fetched-at
+marker, outcome and bounded diagnostics; each successful projection also keeps
+its SHA-256. Raw data, derived data and the crawl success marker commit together.
+Future mapping changes bump the transformation version and explicitly migrate
+the current-data view target when needed (with a schema version bump); separate transformations
+must get their own version and maintenance action instead of a generic job system.
+
+Maintenance is local and source-scoped, uses the existing single write owner,
+and runs exclusively with crawling. It reads at most 64 responses or about 4 MiB
+per page (plus the final bounded response), extracts one response at a time,
+and commits projections, outcomes and its sequential cursor atomically. The
+normal crawl also extracts one response at a time inside its existing batch;
+no HTTP or filesystem operations occur inside transactions. Response size is
+limited to 16 MiB and derived rows to 20,000 per product. Stored field warnings
+are capped at 32 per product, UI issue pages at 50 entries, and UI events at 4 Hz.
+
+Progress counts committed outcomes, including failed extractions. Pause and
+close cancel pending reads and let a current short write transaction settle.
+After a restart, no work resumes automatically. Resume continues the persisted
+maintenance pass; End retains committed work and releases the catalog. A later
+pass retries failures and handles missing/outdated projections. Schema updates
+show stages without a fabricated percentage; extraction has a known workload.

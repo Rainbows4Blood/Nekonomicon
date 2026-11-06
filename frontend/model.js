@@ -1,4 +1,6 @@
 export const labels = {
+  maintenance_required: "Database needs maintenance before crawling",
+  loading: "Opening local catalog",
   setup: "Sign-in needed",
   ready: "Ready when you are",
   starting: "Preparing your run",
@@ -14,16 +16,17 @@ export const labels = {
   blocked_storage: "Local storage needs attention",
 };
 export function controls(s) {
+  const maintenanceHeld = s.maintenance?.running || s.maintenance?.held;
   const held = Boolean(s.run),
-    locked = held || s.running,
-    busy = s.busy || s.state === "pausing";
+    locked = held || s.running || Boolean(maintenanceHeld),
+    busy = s.busy || s.state === "pausing" || maintenanceHeld;
   const needsConnection =
     (!held || s.run.phase !== "covers") && !s.connectionReady;
   return {
     primary: s.running ? "Pause crawl" : held ? "Resume crawl" : "Start crawl",
     primaryDisabled: busy || !s.storageReady || (!s.running && needsConnection),
     locked,
-    connectionDisabled: s.running || s.busy,
+    connectionDisabled: s.running || s.busy || Boolean(maintenanceHeld),
     coverDisabled: locked || s.busy || !s.storageReady,
     endHidden: !held,
     folderDisabled: locked || s.busy,
