@@ -98,3 +98,16 @@ func (a *App) MaintenanceIssues(offset int) ([]store.MetadataIssue, error) {
 	defer cancel()
 	return s.MetadataIssues(ctx, source, offset)
 }
+
+func (a *App) GroupIssues(offset int) ([]store.MetadataIssue, error) {
+	a.mu.Lock()
+	if a.loading || a.closing || a.store == nil || a.store.Version() != store.SchemaVersion {
+		a.mu.Unlock()
+		return []store.MetadataIssue{}, nil
+	}
+	s, source := a.store, a.source
+	a.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.GroupsIssues(ctx, source, offset)
+}

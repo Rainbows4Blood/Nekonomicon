@@ -348,3 +348,38 @@ WSL/Linux Go 1.27.1 race checks also pass for metadata, store, maintenance and
 engine packages. Linux desktop build/native rendering were not rerun for this
 change. Maintenance snapshots remain readable during schema writes; schema
 version reads use an atomic value rather than waiting for the writer mutex.
+
+## D&D groups (2026-11-06)
+
+Schema v4 and grouping rules v1 add explicit, resumable **Build D&D groups**
+maintenance and atomic live-crawl materialization. See [GROUPS.md](GROUPS.md) for
+the catalog investigation, source/kind allowlists, exact rules and limitations.
+The production catalog remained read-only throughout investigation and validation.
+A bounded test reprocessed 160 real saved responses per storefront in memory:
+zero extraction failures, with 21 DTRPG and 23 DM’s Guild grouping warnings.
+These are ambiguity/unknown-evidence warnings, not automatically assigned editions.
+No authenticated response fixtures or dumps were committed.
+
+Go tests cover edition-parent precedence, publisher/community/compatibility
+rules, JSON:API included resources, source/kind collisions and taxonomy drift,
+atomic refresh rollback, stale membership exclusion, explicit v3 upgrade with
+cancellation, independent task ownership, persisted cursor recovery, and indexed
+group/official lookup plans. Frontend checks include grouping task locks and
+resume/progress behavior. Headless Chromium exercised the production renderer
+with synthetic Wails snapshots at 1440, 980 and 390 px across all maintenance
+states, checking overflow and Home/End keyboard navigation. Native Windows
+interaction and Linux desktop execution were not repeated for this change.
+
+Windows Wails v2.17.1 production build succeeds at `build/bin/Nekonomicon.exe`,
+with the existing `Not found: store.Run` binding-generator warning. The full
+Windows Go suite, go vet and frontend checks pass.
+
+Storage-only measurement on Windows/amd64, Go 1.27.1, AMD Ryzen AI 7 350 (16 logical
+CPUs), temporary SQLite with WAL/synchronous=NORMAL and all schema-v4 primary keys
+and group lookup indexes: `BenchmarkStorage -benchtime=200x -benchmem` measured
+2.143 ms/record (18.76 MB/s), 895,252 B/op and 13,562 allocations/op. Dataset: 200
+distinct IDs derived from the 40,197-byte supplied fixture. Includes extraction,
+group evaluation and transactional raw/derived writes; excludes HTTP and covers.
+The fixture mostly exercises nonmatching group outcomes, so this does not measure
+full-catalog group backfill or predict its runtime. Query-plan tests separately
+verify indexed membership reads; no throughput promise is made.

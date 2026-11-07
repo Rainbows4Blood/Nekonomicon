@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Rainbows4Blood/Nekonomicon/internal/groups"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/metadata"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 	"github.com/gofrs/flock"
@@ -160,7 +161,7 @@ func InspectContext(ctx context.Context, dir string, progress func(string)) (*St
 	return s, nil
 }
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 func (s *Store) Version() int { return int(s.version.Load()) }
 func (s *Store) Upgrade(ctx context.Context, progress func(string)) error {
@@ -247,12 +248,24 @@ func migrate(ctx context.Context, db *sql.DB, version int, progress func(string)
 	if version == 1 {
 		report("Finishing your catalog upgrade…")
 	}
-	if version < SchemaVersion {
+	if version < 3 {
 		report("Preparing metadata tables…")
 		if _, err = tx.ExecContext(ctx, metadataSchema()); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=3"); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if version < 4 {
+		report("Preparing D&D group tables…")
+		if _, err = tx.ExecContext(ctx, groupsSchema()); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=4"); err != nil {
 			return err
 		}
 	}
@@ -280,7 +293,7 @@ func (s *Store) CreateRun(r Run) error {
 		return errors.New("Database needs maintenance before crawling")
 	}
 	var held int
-	if err := s.db.QueryRow(`SELECT count(*) FROM metadata_jobs WHERE state IN ('running','paused','blocked')`).Scan(&held); err != nil {
+	if err := s.db.QueryRow(`SELECT (SELECT count(*) FROM metadata_jobs WHERE state IN ('running','paused','blocked'))+(SELECT count(*) FROM group_jobs WHERE state IN ('running','paused','blocked'))`).Scan(&held); err != nil {
 		return err
 	}
 	if held > 0 {
@@ -403,6 +416,11 @@ func (s *Store) Commit(ctx context.Context, runID string, batch []Result) (Commi
 		return Commit{}, e
 	}
 	defer mw.close()
+	gw, e := prepareGroups(ctx, tx)
+	if e != nil {
+		return Commit{}, e
+	}
+	defer gw.close()
 	var source storefront.Source
 	if e = tx.QueryRowContext(ctx, `SELECT source FROM runs WHERE id=?`, runID).Scan(&source); e != nil {
 		return v, e
@@ -466,6 +484,9 @@ func (s *Store) Commit(ctx context.Context, runID string, batch []Result) (Commi
 			}
 			if e == nil {
 				e = mw.write(ctx, source, r.ID, at, projection)
+				if e == nil {
+					e = gw.write(ctx, source, r.ID, at, groups.Derive(source, projection))
+				}
 			}
 			if projection.Failure != "" {
 				v.MetadataFailures++

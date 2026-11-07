@@ -86,6 +86,20 @@ test("actual renderer handles all run states and committed progress", async () =
   $("crawlTab").onkeydown({ key: "ArrowDown", preventDefault() {} });
   assert.equal($("maintenancePanel").hidden, false);
   await new Promise(resolve => setTimeout(resolve, 0));
+  // Grouping owns the catalog independently and offers the correct resume action.
+  event({ ...initial, storageAvailable: true, maintenance: {state:"paused", action:"groups", held:true, groups:{total:12,current:4,pending:8}, job:{processed:4,total:12}} });
+  assert.equal($("buildGroups").textContent,"Resume grouping");
+  assert.equal($("buildGroups").disabled,false);
+  assert.equal($("extractMetadata").disabled,true);
+  assert.equal($("source").disabled,true);
+  assert.equal($("groupsPending").textContent,"8");
+  event({ ...initial, storageAvailable:true, maintenance:{state:"grouping",action:"groups",held:true,running:true,groups:{pending:8},job:{processed:4,total:12}} });
+  assert.equal($("buildGroups").disabled,true);
+  assert.equal($("maintenanceState").textContent,"Building D&D groups");
+  assert.equal($("maintenanceProgress").value,4);
+  event({ ...initial, storageAvailable:true, maintenance:{state:"completed",action:"groups",groups:{current:12,pending:0}} });
+  assert.equal($("buildGroups").disabled,true);
+  event({ ...initial, storageAvailable: true, storageReady: false, maintenance: schemaRequired });
   const task = { state: "extracting", running: true, held: true, needsSchema: false, summary: { total: 100, current: 0, pending: 100 }, job: { processed: 64, total: 100, warned: 2, failed: 1 } };
   event({ ...initial, storageAvailable: true, maintenance: task });
   assert.equal($("source").disabled, true);

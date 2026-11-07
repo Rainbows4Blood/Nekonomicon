@@ -126,3 +126,56 @@ func TestPauseAndShutdownSettleBeforeStoreClose(t *testing.T) {
 		t.Fatal("resume skipped records", m.Snapshot())
 	}
 }
+func TestGroupingManagerRestartAndTaskIdentity(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	db, err := sql.Open("sqlite", filepath.Join(s.Dir, "catalog.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO runs VALUES('seed','new','fetch','completed','now','now',0,'dmsguild'); WITH RECURSIVE ids(n) AS(SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<130) INSERT INTO products SELECT 'dmsguild',n,'original','seed',json_object('productId',n,'publisherId',8957,'filters',json_array(json_object('filterId',1000263))) FROM ids;`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.BeginGroups(ctx, storefront.DMSGuild)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.GroupsPage(ctx, storefront.DMSGuild, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CommitGroups(ctx, j, rows); err != nil {
+		t.Fatal(err)
+	}
+	s.SetGroupsState(ctx, storefront.DMSGuild, "paused")
+	m, err := New(ctx, s, storefront.DMSGuild)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Snapshot().Action != "groups" || !m.Snapshot().Held {
+		t.Fatal(m.Snapshot())
+	}
+	if err = m.Start("metadata", nil); err == nil {
+		t.Fatal("switched a paused task")
+	}
+	if err = m.Start("groups", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	v := m.Snapshot()
+	if v.Action != "groups" || v.Job.Processed != 130 || v.Groups.Pending != 0 || v.Summary.Pending != 130 || v.Held {
+		t.Fatal(v)
+	}
+	if err = m.Start("metadata", nil); err != nil {
+		t.Fatal(err)
+	}
+	m.Shutdown()
+}

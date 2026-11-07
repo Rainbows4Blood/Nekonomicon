@@ -161,7 +161,7 @@ func (s *Store) MetadataJob(ctx context.Context, source storefront.Source) (*Met
 }
 func (s *Store) MaintenanceSource(ctx context.Context) (storefront.Source, error) {
 	var source storefront.Source
-	err := s.db.QueryRowContext(ctx, `SELECT source FROM metadata_jobs WHERE state IN ('running','paused','blocked') LIMIT 1`).Scan(&source)
+	err := s.db.QueryRowContext(ctx, `SELECT source FROM metadata_jobs WHERE state IN ('running','paused','blocked') UNION ALL SELECT source FROM group_jobs WHERE state IN ('running','paused','blocked') LIMIT 1`).Scan(&source)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -185,6 +185,13 @@ func (s *Store) BeginMetadata(ctx context.Context, source storefront.Source) (Me
 		return j, err
 	} else if other != "" && other != source {
 		return j, errors.New("Finish the other storefront's maintenance first")
+	}
+	var otherTask int
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM group_jobs WHERE state IN ('running','paused','blocked')").Scan(&otherTask); err != nil {
+		return j, err
+	}
+	if otherTask > 0 {
+		return j, errors.New("Finish group maintenance first")
 	}
 	old, err := s.MetadataJob(ctx, source)
 	if err != nil {

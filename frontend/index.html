@@ -109,6 +109,13 @@
               <div class="metrics"><div class="metric"><span>Up to date</span><strong id="metadataCurrent">—</strong></div><div class="metric"><span>Needs extraction</span><strong id="metadataPending">—</strong></div></div>
               <p id="metadataCoverage" class="note"></p><div class="actions"><button id="extractMetadata" class="primary">Extract metadata</button><button id="refreshMaintenance">Refresh counts</button></div>
             </section>
+            <section class="surface maintenance-task" aria-labelledby="groupsTitle">
+              <div class="section-heading"><span class="eyebrow">Saved product responses</span><span class="state-badge">Local operation</span></div>
+              <h2 id="groupsTitle">D&D edition groups</h2><p class="muted">Group Original, Basic, AD&D and D&D editions through 5.5, with official-product status. Both storefronts use the same rules; run this task for each storefront.</p>
+              <div class="metrics"><div class="metric"><span>Checked for groups</span><strong id="groupsCurrent">—</strong></div><div class="metric"><span>Needs grouping</span><strong id="groupsPending">—</strong></div></div>
+              <p id="groupsCoverage" class="note"></p><div class="actions"><button id="buildGroups" class="primary">Build D&D groups</button></div>
+              <p class="note">B/X includes Basic, BECMI and Rules Cyclopedia. Ambiguous editions remain unresolved. Official status uses publisher evidence; community and compatibility-only products stay unofficial. New crawls update groups automatically.</p>
+            </section>
             <section class="surface maintenance-progress" aria-label="Maintenance progress">
               <div class="section-heading"><span class="eyebrow">Maintenance progress</span></div>
               <div class="statusline"><h2 id="maintenanceState">Ready</h2><span id="maintenanceCount" class="muted"></span></div>
@@ -117,8 +124,8 @@
               <div class="actions"><button id="pauseMaintenance" hidden>Pause</button><button id="endMaintenance" hidden>End maintenance</button></div>
             </section>
             <details id="metadataIssues" class="surface" open>
-              <summary><svg class="icon" aria-hidden="true"><use href="#icon-activity"/></svg>Warnings &amp; failed extractions</summary>
-              <div class="panel"><p class="note">Warnings preserve useful metadata. Failed extractions can be retried with Extract metadata.</p><ol id="metadataIssueList" class="errors"></ol><div class="actions pagination"><button id="metadataPrevious">Previous</button><span id="metadataPage" class="note">Page 1</span><button id="metadataNext">Next</button><button id="reloadMetadataIssues" class="push-right">Refresh issues</button></div></div>
+              <summary><svg class="icon" aria-hidden="true"><use href="#icon-activity"/></svg>Maintenance warnings &amp; failures</summary>
+              <div class="panel"><label for="issueTask">Task</label><select id="issueTask"><option value="metadata">Product metadata</option><option value="groups">D&D groups</option></select><p class="note">Warnings preserve supported results. Failed records can be retried with the corresponding task. Ambiguous editions need better source evidence.</p><ol id="metadataIssueList" class="errors"></ol><div class="actions pagination"><button id="metadataPrevious">Previous</button><span id="metadataPage" class="note">Page 1</span><button id="metadataNext">Next</button><button id="reloadMetadataIssues" class="push-right">Refresh issues</button></div></div>
             </details>
           </div>
           <aside class="inspector" aria-label="Database maintenance">
