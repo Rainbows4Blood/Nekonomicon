@@ -87,3 +87,11 @@ during fetching. They do not pause a run. Discovery progress is retained across
 pause/resume while the process stays open; reopening the app rediscovers it.
 
 The production screen now offers DriveThruRPG and DM’s Guild through a labeled native selector. It locks during active/paused runs and connection operations. Switching resets connection readiness, clears manual cookie fields, updates host hints and the test product ID, and displays only that store’s catalog/errors. Keyboard focus returns to the selector after switching. The original offline mockup remains a DTRPG illustration. Data maintenance is implemented; catalog browsing, remote storage, and infrastructure settings remain out of scope. No external assets or icon package are required by this mockup.
+
+Data maintenance also offers **D&D edition groups**, with checked/pending counts,
+Build/Resume grouping, and the shared committed progress controls. Metadata and
+grouping cannot overlap or replace a paused task. The issues disclosure has a
+labeled task selector so grouping ambiguity and failures can be reviewed without
+mixing them with metadata diagnostics. B/X's Basic-family meaning and conservative
+official-status behavior are explained beside the task. Groups are rebuilt per
+storefront without sign-in. Existing responsive and keyboard behavior is retained.

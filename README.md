@@ -2,7 +2,7 @@
 
 A small, fast local book crawler built with Go and Wails. Supports **DriveThruRPG and DM’s Guild**.
 
-The desktop application includes: scoped Firefox/manual authentication, sitemap discovery, complete API responses in SQLite, structured product metadata, recoverable runs, local primary covers, and explicit Data maintenance. See [implementation and validation notes](docs/IMPLEMENTATION.md) for measured results and platform limitations.
+The desktop application includes: scoped Firefox/manual authentication, sitemap discovery, complete API responses in SQLite, structured product metadata, indexed D&D edition groups, recoverable runs, local primary covers, and explicit Data maintenance. See [implementation and validation notes](docs/IMPLEMENTATION.md) for measured results and platform limitations.
 
 The frontend uses a full-window desktop workspace: persistent storefront/navigation
 sidebar, crawl command bar, run overview, connection inspector, and shared status
@@ -19,7 +19,7 @@ to narrow windows and system light/dark appearance.
 
 Go/Wails desktop application; local SQLite; complete product response JSON; local cover files. Discover IDs from robots-declared sitemaps (or the verified fixed fallback), fetch products in bounded parallel workers, save in batches through one writer, then download covers separately. Authentication behavior is ported from KaijuCrawl.
 
-Storytellers Vault, Ulisses eBooks, network databases, S3, classification, and catalog enrichment are deferred.
+Storytellers Vault, Ulisses eBooks, network databases, S3, general classification, and catalog enrichment are deferred. Fixed D&D edition groups are supported through Data maintenance.
 
 ## Use
 
@@ -110,3 +110,12 @@ Both use temporary local catalogs and the supplied fixture; neither contacts a s
 ## Repository reset
 
 The fresh-start commit replaces the previous repository contents without rewriting history. Its parent contains the previous design. Revert the reset commit to restore that tree.
+
+D&D groups are available in **Data maintenance**. Choose **Apply database update**
+for schema v4, then **Build D&D groups** for each storefront. This materializes
+nine edition groups and an official-product flag with recorded evidence, using
+local responses only. Pause/Resume/End work independently of metadata extraction.
+New crawls update memberships automatically. B/X includes Basic, BECMI and Rules
+Cyclopedia. Ambiguous editions remain unresolved; see [grouping rules and
+limitations](docs/GROUPS.md). Indexed group reads are ready for future catalog
+displays; this update does not add a browsing workspace.

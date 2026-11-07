@@ -6,7 +6,7 @@ Status: implementation specification. This replaces the previous design entirely
 
 Build a slick, simple, fast local desktop crawler in Go/Wails. Collect DriveThruRPG and DM’s Guild product API responses and primary covers. The application runs on the user's Windows or Linux machine without a database server or object-storage service.
 
-The DTRPG gate passed on 2026-11-01; the user authorized DM’s Guild on 2026-11-05. Provide a selector for these two implemented storefronts only. Storytellers Vault and Ulisses eBooks remain deferred. No browsing/search/classification/enrichment system, cross-store deduplication, network storage, scheduler, or distributed architecture.
+The DTRPG gate passed on 2026-11-01; the user authorized DM’s Guild on 2026-11-05. Provide a selector for these two implemented storefronts only. Storytellers Vault and Ulisses eBooks remain deferred. No browsing/search, general classification or enrichment system (fixed D&D groups are specified in section 14), cross-store deduplication, network storage, scheduler, or distributed architecture.
 
 ## 2. Three sequential phases
 
@@ -177,8 +177,8 @@ neither structural updates nor transformations. Incompatible schemas block
 crawling; missing historical metadata does not block new crawling once the
 schema is compatible. A newer-than-supported schema requires a newer app.
 
-The Data maintenance tab offers two explicit actions: Apply database update and
-Extract metadata. Schema v3 adds the metadata tables to v2 without copying
+The Data maintenance tab offers Apply database update, Extract metadata, and
+Build D&D groups (section 14). Schema v3 adds the metadata tables to v2 without copying
 products. The prior transactional v1-to-v2 copy remains available through this
 explicit action. Initialization of an empty catalog is also explicit.
 
@@ -230,3 +230,21 @@ After a restart, no work resumes automatically. Resume continues the persisted
 maintenance pass; End retains committed work and releases the catalog. A later
 pass retries failures and handles missing/outdated projections. Schema updates
 show stages without a fabricated percentage; extraction has a known workload.
+
+## 14. Materialized D&D groups (2026-11-06)
+
+Fixed D&D edition grouping is now authorized for both storefronts. It is the
+only classification added to this specification. See [grouping evidence and
+rules](GROUPS.md) for verified source-specific taxonomy namespaces, all nine
+edition mappings, ambiguity handling, and official-product precedence. B/X is
+the broader Basic/BECMI/Rules Cyclopedia family by explicit user decision.
+
+Schema v4 adds indexed group definitions/memberships and separate grouping
+state/progress tables without copying or changing original responses. Data
+maintenance offers **Build D&D groups** independently of **Extract metadata**.
+Grouping uses the shared extractor with its own rule version, on both live
+success and explicit historical maintenance. Its bounded batches, atomic cursor,
+pause/resume/end, failure recovery, source locks and schema gate follow section 13.
+Opening performs neither a schema update nor grouping. Current group reads seek
+an indexed group range and point-check freshness; they never scan response JSON.
+Ambiguous editions are reported, not guessed, and official status can be unknown.
