@@ -275,6 +275,9 @@ func (r *Runner) process(ctx context.Context, s *store.Store, p Provider, gate *
 		}
 		stage := "storefront"
 		message := "Reading the cover and full storefront JSON…"
+		if cover == "" {
+			message = "Reading the full storefront JSON without a cover…"
+		}
 		if web {
 			stage = "web"
 			message = "Checking missing information with web search available…"

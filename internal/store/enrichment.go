@@ -95,7 +95,12 @@ func (s *Store) SaveEnrichment(ctx context.Context, b EnrichmentBook, result enr
 	settings, _ := json.Marshal(result.Settings)
 	locations, _ := json.Marshal(result.Locations)
 	dates, _ := json.Marshal(result.Dates)
-	r, err := s.db.ExecContext(ctx, `INSERT INTO enrichment_results(source,product_id,version,response_fetched_at,players_json,levels_json,min_player,max_player,min_level,max_level,players_complete,levels_complete,status,message,model,cover_hash,updated_at,players_done,levels_done,settings_json,locations_json,dates_json,settings_done,locations_done,dates_done,settings_complete,locations_complete,dates_complete) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM products WHERE source=? AND product_id=? AND fetched_at=?) ON CONFLICT(source,product_id) DO UPDATE SET version=excluded.version,response_fetched_at=excluded.response_fetched_at,players_json=excluded.players_json,levels_json=excluded.levels_json,min_player=excluded.min_player,max_player=excluded.max_player,min_level=excluded.min_level,max_level=excluded.max_level,players_complete=excluded.players_complete,levels_complete=excluded.levels_complete,status=excluded.status,message=excluded.message,model=excluded.model,cover_hash=excluded.cover_hash,updated_at=excluded.updated_at,players_done=excluded.players_done,levels_done=excluded.levels_done,settings_json=excluded.settings_json,locations_json=excluded.locations_json,dates_json=excluded.dates_json,settings_done=excluded.settings_done,locations_done=excluded.locations_done,dates_done=excluded.dates_done,settings_complete=excluded.settings_complete,locations_complete=excluded.locations_complete,dates_complete=excluded.dates_complete`, b.Source, b.ID, enrichdata.Version, b.Fetched, string(players), string(levels), result.Players.Min, result.Players.Max, result.Levels.Min, result.Levels.Max, result.Players.Complete(), result.Levels.Complete(), status, message, enrichdata.Model, hash, now(), playersDone, levelsDone, string(settings), string(locations), string(dates), settingsDone, locationsDone, datesDone, result.Settings.Known(), result.Locations.Known(), result.Dates.Known(), b.Source, b.ID, b.Fetched)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	r, err := tx.ExecContext(ctx, `INSERT INTO enrichment_results(source,product_id,version,response_fetched_at,players_json,levels_json,min_player,max_player,min_level,max_level,players_complete,levels_complete,status,message,model,cover_hash,updated_at,players_done,levels_done,settings_json,locations_json,dates_json,settings_done,locations_done,dates_done,settings_complete,locations_complete,dates_complete) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM products WHERE source=? AND product_id=? AND fetched_at=?) ON CONFLICT(source,product_id) DO UPDATE SET version=excluded.version,response_fetched_at=excluded.response_fetched_at,players_json=excluded.players_json,levels_json=excluded.levels_json,min_player=excluded.min_player,max_player=excluded.max_player,min_level=excluded.min_level,max_level=excluded.max_level,players_complete=excluded.players_complete,levels_complete=excluded.levels_complete,status=excluded.status,message=excluded.message,model=excluded.model,cover_hash=excluded.cover_hash,updated_at=excluded.updated_at,players_done=excluded.players_done,levels_done=excluded.levels_done,settings_json=excluded.settings_json,locations_json=excluded.locations_json,dates_json=excluded.dates_json,settings_done=excluded.settings_done,locations_done=excluded.locations_done,dates_done=excluded.dates_done,settings_complete=excluded.settings_complete,locations_complete=excluded.locations_complete,dates_complete=excluded.dates_complete`, b.Source, b.ID, enrichdata.Version, b.Fetched, string(players), string(levels), result.Players.Min, result.Players.Max, result.Levels.Min, result.Levels.Max, result.Players.Complete(), result.Levels.Complete(), status, message, enrichdata.Model, hash, now(), playersDone, levelsDone, string(settings), string(locations), string(dates), settingsDone, locationsDone, datesDone, result.Settings.Known(), result.Locations.Known(), result.Dates.Known(), b.Source, b.ID, b.Fetched)
 	if err != nil {
 		return err
 	}
@@ -103,7 +108,10 @@ func (s *Store) SaveEnrichment(ctx context.Context, b EnrichmentBook, result enr
 	if n != 1 {
 		return errors.New("Source changed before enrichment could be saved")
 	}
-	return nil
+	if err = writeEnrichmentTerms(ctx, tx, b.Source, b.ID, result); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) EnrichmentHistory(ctx context.Context, offset int) ([]EnrichmentBook, error) {
 	if offset < 0 {

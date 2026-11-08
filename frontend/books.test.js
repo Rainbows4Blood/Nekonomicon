@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import {parseHTML} from "linkedom";
 import {booksUI} from "./books.js";
+import {enrichmentUI} from "./enrichment.js";
 import {maintenanceUI} from "./maintenance.js";
 const tick = () => new Promise(resolve=>setTimeout(resolve,0));
 test("D&D search, paging, safe details, theme switching and stale-result rejection",async()=>{
@@ -11,18 +12,25 @@ test("D&D search, paging, safe details, theme switching and stale-result rejecti
  const $=id=>document.getElementById(id);
  let state={source:"dmsguild",storageAvailable:true,dataFolder:"first",maintenance:{catalog:{current:100,pending:0}}},calls=[],deferred;
  const book={source:"dtrpg",id:42,name:"<img src=x onerror=bad()>",publisher:"Archive",releaseDate:"2024-01-01",editions:["dnd-35"],official:true,hasCover:true};
- const api={BrowseBooks:async q=>{calls.push(q);return deferred?await deferred:{books:[book],next:q.after?"":"next",catalogKey:"first"};},BookDetails:async()=>({...book,description:"<script>unsafe</script>",facts:[{label:"Pages",value:"20"}],enrichment:{settings:{names:["Forgotten Realms","Eberron"],agnostic:true,evidence:"Adaptable to any campaign setting"},locations:{items:[{name:"Waterdeep <script>unsafe</script>",setting:"Forgotten Realms"},{name:"Sharn",setting:"Eberron"}],evidence:"Travel between these cities"},dates:{items:[{date:"Winter 1492–1493 DR",calendar:"Dalereckoning",setting:"Forgotten Realms"},{date:"Ten years after the war",calendar:null,setting:null}],evidence:"Dates from the adventure"},players:{min:null,max:null,evidence:"Not specified"},levels:{min:1,max:null,evidence:"Starting at level 1"}},playersEnriched:true,levelsEnriched:true,settingsEnriched:true,locationsEnriched:true,datesEnriched:true,catalogKey:"first"}),RefreshMaintenance:async()=>{},MaintenanceIssues:async()=>[]};
- const ui=booksUI({api,getState:()=>state});const nav=maintenanceUI({api,getState:()=>state,invoke:fn=>fn(),onSelect:name=>ui.activate(name==="dnd")});ui.render(state);
+ const api={AdventureFilterOptions:async kind=>({options:({setting:[{value:"forgotten realms",label:"Forgotten Realms"},{value:"eberron",label:"Eberron"}],location:[{value:"waterdeep",label:"Waterdeep"}],"world-date":[{value:"1492 dr",label:"1492 DR"}],calendar:[{value:"dalereckoning",label:"Dalereckoning"}]})[kind],next:""}),BrowseBooks:async q=>{calls.push(q);return deferred?await deferred:{books:[book],next:q.after?"":"next",catalogKey:"first"};},BookDetails:async()=>({...book,description:"<script>unsafe</script>",facts:[{label:"Pages",value:"20"}],enrichment:{settings:{names:["Forgotten Realms","Eberron"],agnostic:true,evidence:"Adaptable to any campaign setting"},locations:{items:[{name:"Waterdeep <script>unsafe</script>",setting:"Forgotten Realms"},{name:"Sharn",setting:"Eberron"}],evidence:"Travel between these cities"},dates:{items:[{date:"Winter 1492–1493 DR",calendar:"Dalereckoning",setting:"Forgotten Realms"},{date:"Ten years after the war",calendar:null,setting:null}],evidence:"Dates from the adventure"},players:{min:null,max:null,evidence:"Not specified"},levels:{min:1,max:null,evidence:"Starting at level 1"}},playersEnriched:true,levelsEnriched:true,settingsEnriched:true,locationsEnriched:true,datesEnriched:true,catalogKey:"first"}),RefreshMaintenance:async()=>{},MaintenanceIssues:async()=>[]};
+ book.enrichment=(await api.BookDetails()).enrichment;book.playersEnriched=true;book.levelsEnriched=true;book.settingsEnriched=true;book.locationsEnriched=true;book.datesEnriched=true;
+ const ui=booksUI({api,getState:()=>state}),adventures=booksUI({api,getState:()=>state,adventuresOnly:true});const sections=enrichmentUI({api,getState:()=>state,invoke:fn=>fn(),books:ui,adventures});const nav=maintenanceUI({api,getState:()=>state,invoke:fn=>fn(),onSelect:name=>sections.activate(name==="dnd")});ui.render(state);adventures.render(state);
  $("dndTab").onclick();await tick();
  assert(document.documentElement.classList.contains("fantasy"));assert($("source").closest("[role=tabpanel]").hidden);assert.equal($("footerSource").textContent,"All storefronts");
- assert.equal(calls[0].source, "");assert.equal(calls[0].sort,"name-asc");assert.equal($("bookList").querySelector("strong img"),null);
+ assert.equal(calls[0].adventuresOnly,false);assert.deepEqual(calls[0].enrichment,{});assert.equal($("librarySubPanel").querySelector(".enriched-filters"),null);assert.equal($("bookSort").children.length,4);assert.equal($("bookList").querySelector(".book-enriched-summary"),null);assert.equal(calls[0].source, "");assert.equal(calls[0].sort,"name-asc");assert.equal($("bookList").querySelector("strong img"),null);
  $("booksNext").onclick();await tick();assert.equal(calls.at(-1).after,"next");assert.equal($("booksPrevious").disabled,false);
  $("bookOfficial").value="official";$("bookOfficial").onchange();await tick();assert.equal(calls.at(-1).after,"");assert.equal(calls.at(-1).official,"official");
  $("bookSource").value="dtrpg";$("bookSource").onchange();await tick();assert.equal(calls.at(-1).source,"dtrpg");assert.equal(calls.at(-1).after,"");assert.equal(state.source,"dmsguild");
  $("bookSearch").value="dragon";$("bookSearchIn").value="all";$("bookSort").value="date-desc";$("bookFilters").onsubmit({preventDefault(){}});await tick();assert.equal(calls.at(-1).search,"dragon");assert.equal(calls.at(-1).searchIn,"all");assert.equal(calls.at(-1).sort,"date-desc");
- $("bookList").querySelector("button").onclick();await tick();assert.equal($("bookDetailView").hidden,false);assert.equal($("bookDetail").querySelector("script"),null);assert.match($("bookDetail").textContent,/unsafe/);assert.match($("bookDetail").textContent,/Unknown \(enriched\)/);
- assert.match($("bookDetail").textContent,/Forgotten Realms; Eberron; Agnostic/);assert($("bookDetail").textContent.includes("Waterdeep <script>unsafe</script>"));assert($("bookDetail").textContent.includes("Winter 1492–1493 DR (Dalereckoning · Forgotten Realms)"));assert.match($("bookDetail").textContent,/Ten years after the war/);
- $("bookBack").onclick();assert.equal($("bookListView").hidden,false);assert.equal($("bookSearch").value,"dragon");
+ $("adventuresSubTab").onclick();await tick();assert.equal(calls.at(-1).adventuresOnly,true);assert.equal(calls.at(-1).search,"");assert.equal($("adventureList").querySelectorAll("td").length,10);assert.equal($("adventureList").querySelector("script"),null);assert.match($("adventureList").textContent,/Waterdeep <script>unsafe<\/script>/);$("adventureSearch").value="dragon";
+ $("adventureSetting").value="forgotten realms";$("adventureSettingsState").value="agnostic";$("adventureMinPlayerFrom").value="3";$("adventureMinPlayerTo").value="5";$("adventureLocation").value="waterdeep";$("adventureLocation").onchange();$("adventureWorldDate").value="1492 dr";$("adventureWorldDate").onchange();$("adventureCalendar").value="dalereckoning";$("adventureCalendar").onchange();$("adventureSort").value="world-date-desc";$("adventureSetting").onchange();await tick();
+ assert.deepEqual(calls.at(-1).enrichment.setting,["forgotten realms"]);assert.equal(calls.at(-1).enrichment.settings,"agnostic");assert.deepEqual(calls.at(-1).enrichment.minPlayer,{from:3,to:5});assert.equal(calls.at(-1).enrichment.minLevel.from,null);assert.deepEqual(calls.at(-1).enrichment.location,["waterdeep"]);assert.deepEqual(calls.at(-1).enrichment.worldDate,["1492 dr"]);assert.deepEqual(calls.at(-1).enrichment.calendar,["dalereckoning"]);assert.equal(calls.at(-1).sort,"world-date-desc");assert.equal(calls.at(-1).after,"");
+ const beforeInvalid=calls.length;$("adventureMinPlayerFrom").value="8";$("adventureMinPlayerFrom").onchange();await tick();assert.equal(calls.length,beforeInvalid);assert.match($("adventureStatus").textContent,/From/);$("adventureMinPlayerFrom").value="3";$("adventureMinPlayerFrom").onchange();await tick();
+ $("adventureList").querySelector("button").onclick();await tick();assert.equal($("adventureDetailView").hidden,false);assert.equal($("adventureDetail").querySelector("script"),null);assert.match($("adventureDetail").textContent,/unsafe/);assert.match($("adventureDetail").textContent,/Unknown \(enriched\)/);
+ assert.match($("adventureDetail").textContent,/Forgotten Realms; Eberron; Agnostic/);assert($("adventureDetail").textContent.includes("Waterdeep <script>unsafe</script>"));assert($("adventureDetail").textContent.includes("Winter 1492–1493 DR (Dalereckoning · Forgotten Realms)"));assert.match($("adventureDetail").textContent,/Ten years after the war/);
+ $("adventureBack").onclick();assert.equal($("adventureListView").hidden,false);assert.equal($("adventureSearch").value,"dragon");
+ assert.equal($("adventureSetting").value,"forgotten realms");$("adventureReset").onclick();await tick();assert.deepEqual(calls.at(-1).enrichment.setting,[]);assert.equal(calls.at(-1).enrichment.minPlayer.from,null);assert.equal(calls.at(-1).sort,"name-asc");
+ $("librarySubTab").onclick();$("bookRefresh").onclick();await tick();assert.equal(calls.at(-1).adventuresOnly,false);assert.deepEqual(calls.at(-1).enrichment,{});assert.equal($("bookSearch").value,"dragon");assert.equal($("bookSort").value,"date-desc");
  $("maintenanceTab").onclick();assert(!document.documentElement.classList.contains("fantasy"));assert.equal($("dndPanel").hidden,true);
  $("maintenanceTab").onkeydown({key:"End",preventDefault(){}});assert(document.documentElement.classList.contains("fantasy"));
  let resolve;deferred=new Promise(r=>{resolve=r;});$("bookRefresh").onclick();state={...state,dataFolder:"second",loading:true};ui.render(state);resolve({books:[book],next:"",catalogKey:"first"});await tick();assert.equal($("bookList").children.length,0);
@@ -31,4 +39,27 @@ test("D&D search, paging, safe details, theme switching and stale-result rejecti
  assert.equal($("buildCatalog").textContent,"Resume indexing");assert.equal($("extractMetadata").disabled,true);assert.equal($("buildGroups").disabled,true);
  nav.render({...state,loading:false,maintenance:{state:"completed",countsStale:true}},false);assert.equal($("maintenanceCountsWarning").hidden,false);assert.equal($("endMaintenance").hidden,true);
  delete globalThis.window;delete globalThis.document;
+});
+
+test("multi-select choices preserve selections across option pages and reject stale catalog replies",async()=>{
+ const {document}=parseHTML(await readFile(new URL("index.html",import.meta.url),"utf8"));globalThis.document=document;
+ const $=id=>document.getElementById(id);let state={dataFolder:"one",storageAvailable:true,maintenance:{}},mode="normal",pendingResolve,calls=[];
+ const api={BrowseBooks:async q=>{calls.push(q);return {books:[],next:"next"};},AdventureFilterOptions:async(kind,after)=>{
+   if(mode==="error")throw Error("synthetic");
+   if(mode==="deferred"&&kind==="setting")return await new Promise(r=>pendingResolve=r);
+   if(kind!=="setting")return {options:[],next:""};
+   return after?{options:[{value:"zakhara",label:"Zakhara"}],next:""}:{options:[{value:"eberron",label:"Eberron"},{value:"forgotten realms",label:"Forgotten Realms <script>unsafe</script>"}],next:"forgotten realms"};
+ }};
+ const ui=booksUI({api,getState:()=>state,adventuresOnly:true});ui.render(state);ui.activate(true);await tick();
+ const choose=(...values)=>{for(const option of $("adventureSetting").querySelectorAll("option")){if(values.includes(option.value))option.setAttribute("selected","");else option.removeAttribute("selected");}$("adventureSetting").onchange();};
+ choose("eberron","forgotten realms");await tick();assert.deepEqual(calls.at(-1).enrichment.setting,["eberron","forgotten realms"]);assert.equal($("adventureSetting").querySelector("script"),null);
+ $("adventureSettingChoicesNext").onclick();await tick();assert($("adventureSetting").querySelector("optgroup"));assert.equal($("adventureSetting").querySelectorAll("option").length,3);
+ choose("eberron","forgotten realms","zakhara");await tick();assert.deepEqual(calls.at(-1).enrichment.setting,["eberron","forgotten realms","zakhara"]);
+ $("adventureSettingChoicesPrevious").onclick();await tick();assert.equal($("adventureSetting").querySelectorAll("option[selected]").length,3);
+ $("adventureSettingChoicesClear").onclick();await tick();assert.deepEqual(calls.at(-1).enrichment.setting,[]);assert.match($("adventureCalendarChoicesStatus").textContent,/No saved values/);
+ mode="error";$("adventureRefresh").onclick();await tick();assert.equal($("adventureSettingChoicesRetry").hidden,false);assert.match($("adventureSettingChoicesStatus").textContent,/Could not load/);
+ mode="normal";$("adventureSettingChoicesRetry").onclick();await tick();assert.equal($("adventureSettingChoicesRetry").hidden,true);
+ choose("eberron");await tick();mode="deferred";$("adventureRefresh").onclick();await tick();mode="normal";state={...state,dataFolder:"two"};ui.render(state);pendingResolve({options:[{value:"stale",label:"Old catalog"}],next:""});await tick();
+ assert(!$("adventureSetting").textContent.includes("Old catalog"));assert.deepEqual(calls.at(-1).enrichment.setting,[]);
+ delete globalThis.document;
 });

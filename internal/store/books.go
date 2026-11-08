@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,23 +18,31 @@ import (
 )
 
 type BookQuery struct {
-	Source   storefront.Source `json:"source"`
-	Edition  string            `json:"edition"`
-	Official string            `json:"official"`
-	Sort     string            `json:"sort"`
-	Search   string            `json:"search"`
-	SearchIn string            `json:"searchIn"`
-	After    string            `json:"after"`
+	AdventuresOnly bool              `json:"adventuresOnly"`
+	Enrichment     EnrichmentFilter  `json:"enrichment"`
+	Source         storefront.Source `json:"source"`
+	Edition        string            `json:"edition"`
+	Official       string            `json:"official"`
+	Sort           string            `json:"sort"`
+	Search         string            `json:"search"`
+	SearchIn       string            `json:"searchIn"`
+	After          string            `json:"after"`
 }
 type Book struct {
-	Source      storefront.Source `json:"source"`
-	ID          int64             `json:"id"`
-	Name        string            `json:"name"`
-	Publisher   string            `json:"publisher"`
-	ReleaseDate string            `json:"releaseDate"`
-	Editions    []string          `json:"editions"`
-	Official    *bool             `json:"official"`
-	HasCover    bool              `json:"hasCover"`
+	Enrichment        enrichdata.Result `json:"enrichment"`
+	PlayersEnriched   bool              `json:"playersEnriched"`
+	LevelsEnriched    bool              `json:"levelsEnriched"`
+	SettingsEnriched  bool              `json:"settingsEnriched"`
+	LocationsEnriched bool              `json:"locationsEnriched"`
+	DatesEnriched     bool              `json:"datesEnriched"`
+	Source            storefront.Source `json:"source"`
+	ID                int64             `json:"id"`
+	Name              string            `json:"name"`
+	Publisher         string            `json:"publisher"`
+	ReleaseDate       string            `json:"releaseDate"`
+	Editions          []string          `json:"editions"`
+	Official          *bool             `json:"official"`
+	HasCover          bool              `json:"hasCover"`
 }
 type BookPage struct {
 	Books      []Book `json:"books"`
@@ -86,7 +95,8 @@ func bookSelect(q BookQuery) (string, []any, error) {
 	}
 	date := strings.HasPrefix(q.Sort, "date-")
 	desc := strings.HasSuffix(q.Sort, "desc")
-	if q.Sort != "name-asc" && q.Sort != "name-desc" && q.Sort != "date-asc" && q.Sort != "date-desc" {
+	kind := enrichmentSort(q.Sort)
+	if kind == "" && q.Sort != "name-asc" && q.Sort != "name-desc" && q.Sort != "date-asc" && q.Sort != "date-desc" {
 		return "", nil, errors.New("Unknown book sort")
 	}
 	col, index := "name_key", "dnd_name"
@@ -105,7 +115,7 @@ func bookSelect(q BookQuery) (string, []any, error) {
 		index = strings.Replace(index, "dnd_", "dnd_source_", 1)
 	}
 	access := ""
-	if strings.TrimSpace(q.Search) == "" {
+	if strings.TrimSpace(q.Search) == "" && kind == "" {
 		access = " INDEXED BY " + index
 	}
 	from := "dnd_listing l" + access + " JOIN dnd_books b ON b.source=l.source AND b.product_id=l.product_id"
@@ -113,8 +123,19 @@ func bookSelect(q BookQuery) (string, []any, error) {
 		// Drive selective searches from the FTS matches, then seek each edition entry.
 		from = "dnd_search CROSS JOIN dnd_books b ON b.rowid=dnd_search.rowid CROSS JOIN dnd_listing l ON l.source=b.source AND l.product_id=b.product_id"
 	}
-	query := `SELECT l.source,l.product_id,b.name,b.publisher,b.release_date,b.editions_json,b.official,EXISTS(SELECT 1 FROM covers c WHERE c.source=l.source AND c.product_id=l.product_id),l.` + col + ` FROM ` + from + ` JOIN products p ON p.source=l.source AND p.product_id=l.product_id JOIN catalog_state s ON s.source=l.source AND s.product_id=l.product_id WHERE l.edition=? AND s.version=? AND s.response_fetched_at=p.fetched_at AND s.status IN ('complete','warnings')`
+	key := "l." + col
+	if kind != "" {
+		missing := "2"
+		if desc {
+			missing = "0"
+		}
+		key = "coalesce((SELECT '1'||min(t.value) FROM enrichment_terms t WHERE t.source=e.source AND t.product_id=e.product_id AND t.kind='" + kind + "'),'" + missing + "')"
+	}
+	query := `SELECT l.source,l.product_id,b.name,b.publisher,b.release_date,b.editions_json,b.official,EXISTS(SELECT 1 FROM covers c WHERE c.source=l.source AND c.product_id=l.product_id),` + key + `,coalesce(e.players_json,'{}'),coalesce(e.levels_json,'{}'),coalesce(e.settings_json,'{}'),coalesce(e.locations_json,'{}'),coalesce(e.dates_json,'{}'),coalesce(e.players_done,0),coalesce(e.levels_done,0),coalesce(e.settings_done,0),coalesce(e.locations_done,0),coalesce(e.dates_done,0) FROM ` + from + ` JOIN products p ON p.source=l.source AND p.product_id=l.product_id JOIN catalog_state s ON s.source=l.source AND s.product_id=l.product_id LEFT JOIN enrichment_results e ON e.source=l.source AND e.product_id=l.product_id AND e.version=1 AND e.response_fetched_at=p.fetched_at AND b.is_adventure=1 WHERE l.edition=? AND s.version=? AND s.response_fetched_at=p.fetched_at AND s.status IN ('complete','warnings')`
 	args := []any{q.Edition, catalog.Version}
+	if q.AdventuresOnly {
+		query += " AND b.is_adventure=1"
+	}
 	if q.Source != "" {
 		query += " AND l.source=?"
 		args = append(args, q.Source)
@@ -135,9 +156,16 @@ func bookSelect(q BookQuery) (string, []any, error) {
 		query += ` AND dnd_search MATCH ?`
 		args = append(args, expression)
 	}
+	extra, extraArgs, err := enrichmentWhere(q.Enrichment)
+	if err != nil {
+		return "", nil, err
+	}
+	query += extra
+	args = append(args, extraArgs...)
 	fingerprint := q
 	fingerprint.After = ""
-	filter, _ := json.Marshal(fingerprint)
+	filterJSON, _ := json.Marshal(fingerprint)
+	filter := fmt.Sprintf("%x", sha256.Sum256(filterJSON))
 	op, dir := ">", " ASC"
 	if desc {
 		op, dir = "<", " DESC"
@@ -148,15 +176,15 @@ func bookSelect(q BookQuery) (string, []any, error) {
 		}
 		raw, err := base64.RawURLEncoding.DecodeString(q.After)
 		var cursor bookCursor
-		if err != nil || json.Unmarshal(raw, &cursor) != nil || cursor.Filter != string(filter) || !cursor.Source.Valid() || cursor.ID <= 0 {
+		if err != nil || json.Unmarshal(raw, &cursor) != nil || cursor.Filter != filter || !cursor.Source.Valid() || cursor.ID <= 0 {
 			return "", nil, errors.New("The page changed; refresh the book list")
 		}
-		seek := `(l.` + col + `,l.source,l.product_id)` + op + `(?,?,?)`
+		seek := `(` + key + `,l.source,l.product_id)` + op + `(?,?,?)`
 		query += " AND " + seek
 		args = append(args, cursor.Key, cursor.Source, cursor.ID)
 	}
 	query += " ORDER BY "
-	query += "l." + col + dir + ",l.source" + dir + ",l.product_id" + dir + " LIMIT 51"
+	query += key + dir + ",l.source" + dir + ",l.product_id" + dir + " LIMIT 51"
 	return query, args, nil
 }
 func (s *Store) Books(ctx context.Context, q BookQuery) (BookPage, error) {
@@ -176,7 +204,8 @@ func (s *Store) Books(ctx context.Context, q BookQuery) (BookPage, error) {
 	var last bookCursor
 	fingerprint := q
 	fingerprint.After = ""
-	filter, _ := json.Marshal(fingerprint)
+	filterJSON, _ := json.Marshal(fingerprint)
+	filter := fmt.Sprintf("%x", sha256.Sum256(filterJSON))
 	for rows.Next() {
 		if len(result.Books) == 50 {
 			raw, _ := json.Marshal(last)
@@ -184,19 +213,22 @@ func (s *Store) Books(ctx context.Context, q BookQuery) (BookPage, error) {
 			break
 		}
 		var b Book
-		var editions string
+		var editions, players, levels, settings, locations, dates string
 		var official int
-		if err = rows.Scan(&b.Source, &b.ID, &b.Name, &b.Publisher, &b.ReleaseDate, &editions, &official, &b.HasCover, &last.Key); err != nil {
+		if err = rows.Scan(&b.Source, &b.ID, &b.Name, &b.Publisher, &b.ReleaseDate, &editions, &official, &b.HasCover, &last.Key, &players, &levels, &settings, &locations, &dates, &b.PlayersEnriched, &b.LevelsEnriched, &b.SettingsEnriched, &b.LocationsEnriched, &b.DatesEnriched); err != nil {
 			return result, err
 		}
 		if err = json.Unmarshal([]byte(editions), &b.Editions); err != nil {
+			return result, err
+		}
+		if err = decodeEnrichment(&b.Enrichment, players, levels, settings, locations, dates); err != nil {
 			return result, err
 		}
 		if official >= 0 {
 			v := official == 1
 			b.Official = &v
 		}
-		last.Source, last.ID, last.Filter = b.Source, b.ID, string(filter)
+		last.Source, last.ID, last.Filter = b.Source, b.ID, filter
 		result.Books = append(result.Books, b)
 	}
 	return result, rows.Err()
@@ -207,12 +239,6 @@ type BookFact struct {
 	Value string `json:"value"`
 }
 type BookDetail struct {
-	Enrichment        enrichdata.Result `json:"enrichment"`
-	PlayersEnriched   bool              `json:"playersEnriched"`
-	LevelsEnriched    bool              `json:"levelsEnriched"`
-	SettingsEnriched  bool              `json:"settingsEnriched"`
-	LocationsEnriched bool              `json:"locationsEnriched"`
-	DatesEnriched     bool              `json:"datesEnriched"`
 	Book
 	Description string     `json:"description"`
 	Facts       []BookFact `json:"facts"`

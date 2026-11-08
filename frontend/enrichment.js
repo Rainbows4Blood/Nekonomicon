@@ -1,7 +1,7 @@
 import {contextFacts} from "./enrichment-format.js";
 const range = r => r?.min == null && r?.max == null ? "Unknown" : `${r?.min ?? "Unknown"}–${r?.max ?? "Unknown"}`;
 const node = (tag,text) => { const el=document.createElement(tag); el.textContent=text;return el; };
-export function enrichmentUI({api,getState,invoke,books}) {
+export function enrichmentUI({api,getState,invoke,books,adventures}) {
   const $=id=>document.getElementById(id);
   let active=false,section="library",signature="",serial=0,page=0,folder="",pending;
   const ready=()=>api && getState().storageAvailable && !getState().maintenance?.needsSchema && !getState().loading;
@@ -14,7 +14,7 @@ export function enrichmentUI({api,getState,invoke,books}) {
       if(ticket!==serial||requestedFolder!==getState().dataFolder)return;
       const c=d.counts||{};pending=c.pending;
       for(const [id,key] of [["Eligible","adventures"],["Players","players"],["Levels","levels"],["Settings","settings"],["Locations","locations"],["Dates","dates"],["Pending","pending"]])$("enrich"+id).textContent=Number(c[key]||0).toLocaleString();
-      $("enrichCoverNote").textContent=`${c.missingCovers||0} adventures have no recorded cover. Use Download covers in Crawler before enriching these books. ${c.unknown||0} books are enriched with some values unknown. ${c.failed||0} books have a saved issue.`;
+      $("enrichCoverNote").textContent=`${c.missingCovers||0} adventures have no recorded cover. These books can be enriched without an image. ${c.unknown||0} books are enriched with some values unknown. ${c.failed||0} books have a saved issue.`;
       $("enrichResults").replaceChildren();
       for(const b of d.books||[]){
         const li=node("li",""),heading=node("h4",b.name),meta=node("p",`${b.source==="dmsguild"?"DM’s Guild":"DriveThruRPG"} · ${b.status==="complete"?"Enriched":b.status==="failed"?"Needs attention":"In progress — saved partial result"}`);
@@ -32,15 +32,15 @@ export function enrichmentUI({api,getState,invoke,books}) {
       renderControls(getState());
     }catch{if(ticket===serial)$("enrichError").textContent="Could not read the dashboard. Refresh to retry.";}
   }
-  function select(name,focus=true){section=name;for(const key of ["library","enrichment"]){$(key+"SubTab").setAttribute("aria-selected",String(key===name));$(key+"SubTab").tabIndex=key===name?0:-1;$(key+"SubPanel").hidden=key!==name;}books.activate(active&&name==="library");if(focus)$(name+"SubTab").focus();if(name==="enrichment")void load();}
-  for(const name of ["library","enrichment"]){$(name+"SubTab").onclick=()=>select(name);$(name+"SubTab").onkeydown=e=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(e.key)){e.preventDefault();select(e.key==="Home"?"library":e.key==="End"?"enrichment":section==="library"?"enrichment":"library");}};}
+  function select(name,focus=true){section=name;for(const key of ["library","adventures","enrichment"]){$(key+"SubTab").setAttribute("aria-selected",String(key===name));$(key+"SubTab").tabIndex=key===name?0:-1;$(key+"SubPanel").hidden=key!==name;}books.activate(active&&name==="library");adventures?.activate(active&&name==="adventures");if(focus)$(name+"SubTab").focus();if(name==="enrichment")void load();}
+  for(const name of ["library","adventures","enrichment"]){$(name+"SubTab").onclick=()=>select(name);$(name+"SubTab").onkeydown=e=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(e.key)){e.preventDefault();select(e.key==="Home"?"library":e.key==="End"?"enrichment":["library","adventures","enrichment"][( ["library","adventures","enrichment"].indexOf(section)+(e.key==="ArrowRight"?1:2))%3]);}};}
   $("enrichStart").onclick=()=>invoke(()=>api.StartEnrichment());$("enrichStop").onclick=()=>invoke(()=>api.StopEnrichment());$("enrichRefresh").onclick=()=>{void load();};
   $("enrichPrevious").onclick=()=>{if(page){page--;void load();}};$("enrichNext").onclick=()=>{page++;void load();};
   function renderControls(s){
     const m=s.maintenance||{},r=s.enrichment||{},blocked=s.busy||s.run||s.running||m.running||m.held;
     $("enrichStart").disabled=!ready()||blocked||r.running||!s.openAI?.planEnabled||s.openAI?.running||pending===0;
     $("enrichStop").hidden=!r.running;$("enrichStop").disabled=r.state==="stopping"||s.closing;$("enrichRefresh").disabled=!ready();
-    $("enrichGate").textContent=m.needsSchema?"Apply the database update in Data maintenance before enriching.":m.catalog?.pending?"Some responses still need indexing. Build D&D browsing index in Data maintenance to include all adventures.":!s.openAI?.planEnabled?"Connect OpenAI in the sidebar to enable enrichment.":blocked?"Finish the current crawl or maintenance first.":pending===0?"All indexed adventures are enriched, or no adventures are indexed yet. Unknown values count as completed.":"Runs all missing enrichments across both storefronts, independently of library filters.";
+    $("enrichGate").textContent=m.needsSchema?"Apply the database update in Data maintenance before enriching.":m.catalog?.pending?"Some responses still need indexing. Build D&D browsing index in Data maintenance to include all adventures.":!s.openAI?.planEnabled?"Connect OpenAI in the sidebar to enable enrichment.":blocked?"Finish the current crawl or maintenance first.":pending===0?"All indexed adventures are enriched, or no adventures are indexed yet. Unknown values count as completed.":"Runs all missing enrichments across both storefronts, independently of Library and Adventures filters.";
   }
   return {activate(value){active=value;select(section,false);},render(s){
     if(folder!==s.dataFolder){folder=s.dataFolder;page=0;serial++;pending=undefined;$("enrichResults").replaceChildren();for(const id of ["Eligible","Players","Levels","Settings","Locations","Dates","Pending"])$("enrich"+id).textContent="—";}

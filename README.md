@@ -189,15 +189,16 @@ values), operational issues, coverage and saved evidence.
 
 The fixed model is GPT-6.1 Terra, with fast mode requested for both passes. OpenAI
 may serve requests at standard speed depending on availability. Each request includes the complete saved product
-JSON and its local cover (resized to fit 1600 pixels, with the whole image retained).
+JSON and, when usable, its local cover (resized to fit 1600 pixels, with the whole image retained).
 A storefront-only pass runs first. Only unresolved fields reach a second pass with
 web search available. Existing populated fields are preserved; unsupported facts
 remain null. Player counts exclude the GM. No conventional party size or level
 limit is invented. Results also appear on book details.
 
 Enrichment uses the connected ChatGPT account's allowance and sends the selected
-records and covers to OpenAI. Missing/invalid covers are reported without a model
-request; download them through Crawler first. Stop retains committed results.
+records and available covers to OpenAI. Books without a usable cover are enriched
+from their full JSON, with web search only for missing facts. Missing, unreadable,
+unsafe or unsupported images are omitted; they do not block enrichment. Stop retains committed results.
 After stopping or restarting, Enrich selects unfinished enrichments again. A
 successful lookup with null/unknown endpoints counts as enriched and is not
 repeated for that source revision. Failed or interrupted requests remain retryable. Crawling,
@@ -240,3 +241,42 @@ supported. Dates preserve the fictional calendar, year, range or relative wordin
 from the evidence; publication dates are never substituted. Unsupported calendar
 or setting associations stay unknown. Each enrichment has its own evidence and
 completion count in the dashboard, with results also shown on book details.
+
+### Browse enriched adventure data
+
+The **Adventures** tab's **Adventure filters** disclosure filters minimum/maximum player counts
+and character levels with independent From/To bounds, settings, locations, in-world
+dates and calendars. These four filters are multi-select lists populated from
+current saved enrichment across both storefronts. Select one or more exact values
+(case/accent variants are combined); selections within a list match any of them,
+while different lists combine. No selection means any value. Hold Ctrl/Command
+to select multiple entries, or use Ctrl + Space with the keyboard. Lists page
+through 100 values at a time and keep selections from other pages visible. Clear
+selection resets one list; Reset clears every filter. Refresh books reloads choices.
+Filters combine with storefront, edition, official status and full-text search.
+Each enrichment has Fully known, Unknown values (enriched), and Not finished / not
+enriched options; settings also offer Agnostic / any setting. Numeric bounds match
+recorded endpoints only; unknown endpoints do not imply an unlimited range.
+
+Sort each numeric endpoint, setting, location, in-world date or calendar in either
+direction. Text sorting uses the alphabetically first saved entry; dates sort by
+recorded text, without assuming a shared chronology across fictional calendars.
+Missing values sort last in both directions. Adventures shows separate columns for
+minimum/maximum players and levels, settings, locations, in-world dates, calendars
+and release date, alongside each title and local thumbnail. Column headings also
+change sort order. Scroll the table horizontally on narrow windows; full results
+and evidence remain in details.
+
+**Library** retains every indexed D&D book and only general search, storefront,
+edition, official-status and name/release-date sort controls. **Adventures** shows
+only classified adventures, including those not yet enriched. Each tab keeps its
+own filters, pagination and details. Enrichment remains a separate third tab.
+
+Existing catalogs need **Data maintenance → Apply database update** (schema v10).
+This builds the enrichment search index from saved results, with cancellation and
+rollback. No new AI requests or browsing-index rebuild are required for v9 → v10.
+Opening still only inspects compatibility. Future saves update results and search
+terms together; refreshed source records hide stale enrichment until enriched again.
+
+The multi-select update uses the existing v10 enrichment index and requires no
+additional database update. Unknown completion states and Agnostic remain distinct.

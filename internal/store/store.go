@@ -162,7 +162,7 @@ func InspectContext(ctx context.Context, dir string, progress func(string)) (*St
 	return s, nil
 }
 
-const SchemaVersion = 9
+const SchemaVersion = 10
 
 func (s *Store) Version() int { return int(s.version.Load()) }
 func (s *Store) Upgrade(ctx context.Context, progress func(string)) error {
@@ -358,6 +358,15 @@ func migrate(ctx context.Context, db *sql.DB, version int, progress func(string)
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=9"); err != nil {
+			return err
+		}
+	}
+	if version < 10 {
+		report("Indexing adventure enrichment filters…")
+		if err = migrateEnrichmentBrowse(ctx, tx); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=10"); err != nil {
 			return err
 		}
 	}

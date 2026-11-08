@@ -43,6 +43,17 @@ func (a *App) BrowseBooks(query store.BookQuery) (store.BookPage, error) {
 	page.CatalogKey = catalogKey(s)
 	return page, err
 }
+func (a *App) AdventureFilterOptions(kind, after string) (store.EnrichmentOptions, error) {
+	s, err := a.catalogStore()
+	if err != nil {
+		return store.EnrichmentOptions{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := s.EnrichmentOptions(ctx, kind, after)
+	result.CatalogKey = catalogKey(s)
+	return result, err
+}
 func (a *App) BookDetails(source string, id int64) (store.BookDetail, error) {
 	s, err := a.catalogStore()
 	if err != nil {

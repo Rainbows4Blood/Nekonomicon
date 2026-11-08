@@ -745,3 +745,74 @@ opening, lock release and unchanged schema, alongside cancellation/rollback test
 Go tests/vet, frontend checks and the Windows Wails build passed. The primary
 build/bin/Nekonomicon.exe was replaced. No user catalog repair, migration or live
 enrichment was performed during this fix.
+
+## Enrichment filters and sorting — 8 November 2026
+
+Schema v10 explicitly builds normalized search terms from saved enrichment, with
+atomic cancellation/retry. New results update terms and evidence together. Numeric
+filters are inclusive per-endpoint bounds; text filters match any value, using
+Unicode case/accent folding. Status selectors keep completed unknowns, unfinished
+results and explicit Agnostic settings distinct. Eight new sort fields support
+both directions, stable pagination, and missing values last. Dates sort as text.
+
+Regression tests cover combined storefront/edition/FTS/enrichment filters, literal
+search terms, zero levels, unknown/pending/Agnostic, all 16 new sort orders over
+multiple pages and both stores, stale exclusions, invalid bounds/cursors, index
+use, cancelled migration/retry, saved-result backfill and atomic save rollback.
+Frontend checks cover control wiring, validation, Reset and Back preservation.
+Embedded Chromium tests exercise expanded filters, keyboard navigation, responsive
+layout, startup and failure recovery at 1440 and 390 px. Go tests/vet, frontend
+checks and the Windows Wails build pass. No live AI calls or user catalog changes.
+
+Storage-only benchmark: Windows amd64, Go 1.26, AMD Ryzen AI 7 350, temporary local
+SQLite in WAL/NORMAL mode with production listing/FTS/term indexes. Dataset: 30,000
+synthetic roughly 2 KiB product responses across both stores, 24,000 enriched books
+with numeric ranges, multiple settings/locations and a fictional date/calendar.
+Setup/backfill, HTTP and covers are excluded from query timing. Three iterations
+per query measured about 0.66 ms for name browsing and 208–409 ms for enriched
+sorts/combined filtering, returning 50 rows. These are small warm-cache samples,
+not a throughput guarantee. Broad enriched sorting still orders matching rows;
+per-book sort keys and filtering use indexed terms instead of raw JSON scans.
+
+Delivery remains build/bin/Nekonomicon.exe. Existing v9 catalogs require Apply
+database update only; saved enrichment is reused without a new AI pass.
+
+## Adventures tab and optional covers — 8 November 2026
+
+Library now has general controls only. Adventures uses the same bounded browse
+service with an explicit adventure predicate before pagination and keeps separate
+filter/cursor/detail state. Its table presents all enriched fields as columns,
+with sortable headings and horizontal keyboard scrolling on narrow windows.
+Enrichment remains independent of both browsing tabs. No new schema migration.
+
+The image loader omits missing/unusable covers while retaining path containment
+and image-size limits; cancellation and database errors remain errors. Requests
+omit input_image entirely when absent and tell the model no image is available.
+Full JSON, source-first inference, conditional search, completion markers and
+parallel processing are unchanged. A successful retry clears prior cover issues.
+
+Validation covers adventure-only pagination/filters and scope-bound cursors;
+separate tab controls, preserved filters, safe column values and details; native
+keyboard tabs/headings and embedded UI at 1440/390 px. Local HTTP tests verify
+full JSON and omitted image content on both passes. Runner tests cover absent,
+missing-file, invalid and oversized covers, clearing old issues, completed unknowns
+and no repeat work, plus cancellation/storage failure handling. Go tests, vet,
+frontend checks and Windows Wails build passed. No live model calls or user
+catalog modifications were used. Delivered build/bin/Nekonomicon.exe.
+
+## Multi-select adventure filters — 8 November 2026
+
+Replaced four free-text fields with native multi-select lists of distinct saved
+setting/location/date/calendar values. Reads use the existing term index, current
+source/projection checks and original result labels. Selection uses parameterized
+exact matching (OR within a field, AND across fields); case/accent variants share
+one key. Choice pages are bounded at 100, selections at 64 per field; selections
+from other pages remain visible. Cursor fingerprints hash the full query.
+No data-model or schema migration is needed beyond v10.
+
+Go regressions cover exact matching, multiple selections, duplicates, literal
+special characters, large-selection cursors, choice paging and stale exclusion.
+Frontend regressions cover selection payloads, preservation across choice pages
+and Back, clearing/reset, failed reads/retry and stale catalog responses. Embedded
+Chromium exercises multiple selections and desktop/narrow layouts. Go tests/vet,
+frontend checks and the Windows Wails build pass; delivered the primary executable.

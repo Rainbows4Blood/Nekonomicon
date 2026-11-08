@@ -129,13 +129,16 @@ func TestMissingOnlyBothStoresAndConditionalWeb(t *testing.T) {
 		t.Fatal("complete books sent again")
 	}
 }
-func TestStorefrontCompleteSkipsSearchAndMissingCoverSkipsModel(t *testing.T) {
+func TestStorefrontCompleteSkipsSearchWithOrWithoutCover(t *testing.T) {
 	for _, hasCover := range []bool{false, true} {
 		t.Run(fmt.Sprint(hasCover), func(t *testing.T) {
 			s := sampleStore(t, hasCover)
 			var calls atomic.Int64
-			p := fakeProvider{func(_ context.Context, _ store.EnrichmentBook, _ string, web bool) (enrichdata.Result, error) {
+			p := fakeProvider{func(_ context.Context, _ store.EnrichmentBook, img string, web bool) (enrichdata.Result, error) {
 				calls.Add(1)
+				if (img != "") != hasCover {
+					t.Error("wrong optional image input")
+				}
 				if web {
 					t.Error("unnecessary web pass")
 				}
@@ -144,10 +147,10 @@ func TestStorefrontCompleteSkipsSearchAndMissingCoverSkipsModel(t *testing.T) {
 			r := &Runner{}
 			r.Start(context.Background(), s, p)
 			wait(t, r)
-			if hasCover && calls.Load() != 2 || !hasCover && calls.Load() != 0 {
+			if calls.Load() != 2 {
 				t.Fatal(calls.Load())
 			}
-			if !hasCover && r.Snapshot().Failed != 2 {
+			if r.Snapshot().Failed != 0 || r.Snapshot().Enriched != 2 {
 				t.Fatal(r.Snapshot())
 			}
 		})
@@ -216,11 +219,14 @@ func TestHTTPContractAndInterruptedStream(t *testing.T) {
 		if req["model"] != enrichdata.Model || req["service_tier"] != "priority" || req["store"] != false || req["stream"] != true {
 			t.Error("invalid model/transport")
 		}
-		if (req["tools"] != nil) != (calls.Load() == 2) {
+		if (req["tools"] != nil) != (calls.Load()%2 == 0) {
 			t.Error("search enabled in first pass")
 		}
 		input, _ := json.Marshal(req["input"])
-		if !bytes.Contains(input, []byte("TOP_LEVEL_INCLUDED_SENTINEL")) || !bytes.Contains(input, []byte("data:image/jpeg;base64,")) {
+		if calls.Load() > 2 && (bytes.Contains(input, []byte("input_image")) || !bytes.Contains(input, []byte("No cover image is available"))) {
+			t.Error("invalid coverless request")
+		}
+		if !bytes.Contains(input, []byte("TOP_LEVEL_INCLUDED_SENTINEL")) || (bytes.Contains(input, []byte("data:image/jpeg;base64,")) != (calls.Load() <= 2)) {
 			t.Error("source truncated")
 		}
 		fmt.Fprint(w, terminal(complete()))
@@ -231,10 +237,12 @@ func TestHTTPContractAndInterruptedStream(t *testing.T) {
 	if err := c.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, web := range []bool{false, true} {
-		_, err := c.Extract(context.Background(), store.EnrichmentBook{Source: storefront.DTRPG, ID: 1, Raw: []byte(`{"included":"TOP_LEVEL_INCLUDED_SENTINEL"}`)}, "data:image/jpeg;base64,synthetic", web, nil)
-		if err != nil {
-			t.Fatal(err)
+	for _, cover := range []string{"data:image/jpeg;base64,synthetic", ""} {
+		for _, web := range []bool{false, true} {
+			_, err := c.Extract(context.Background(), store.EnrichmentBook{Source: storefront.DTRPG, ID: 1, Raw: []byte(`{"included":"TOP_LEVEL_INCLUDED_SENTINEL"}`)}, cover, web, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	for _, raw := range []string{"data: {\"type\":\"response.output_text.delta\",\"delta\":\"{}\"}\n\n", "data: {\"type\":\"response.incomplete\"}\n\n", "data: {\"type\":\"response.failed\"}\n\n"} {

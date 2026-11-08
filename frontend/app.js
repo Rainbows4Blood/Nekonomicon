@@ -14,7 +14,8 @@ let state = {},
   lastRendered = "";
 const openAI = openAIUI({ api, invoke });
 const books = booksUI({ api, getState: () => state });
-const enrichment = enrichmentUI({api,getState:()=>state,invoke,books});
+const adventures = booksUI({ api, getState: () => state, adventuresOnly: true });
+const enrichment = enrichmentUI({api,getState:()=>state,invoke,books,adventures});
 const maintenance = maintenanceUI({ api, getState: () => state, invoke, onSelect: name => enrichment.activate(name === "dnd") });
 function message(text) {
   $("notice").textContent = text;
@@ -48,6 +49,7 @@ function render(s) {
   maintenance.render(s, s.busy || localBusy || s.enrichment?.running);
   enrichment.render(s);
   books.render(s);
+  adventures.render(s);
   openAI.render(s, localBusy || s.enrichment?.running);
   const c = controls({ ...s, busy: s.busy || localBusy }),
     p = progress(s);

@@ -142,11 +142,11 @@ It follows the active workspace theme and stacks above Local data on narrow wind
 
 ## D&D enrichment dashboard
 
-D&D's secondary tablist switches between Library and Enrichment without leaving
+D&D's secondary tablist switches between Library, Adventures and Enrichment without leaving
 the fantasy workspace. Arrow keys/Home/End and labeled panels work from the keyboard.
 Enrich is the single start/retry action. Stop appears during a run. The page explains
 what leaves the computer, shows up to 16 active books with their source/web stages,
-five enrichment completion counts plus eligible and pending books, committed run outcomes, cover prerequisites and paginated
+five enrichment completion counts plus eligible and pending books, committed run outcomes, optional-cover information and paginated
 results/evidence. Unknown endpoints display as Unknown and successful unknown
 lookups count as enriched, separately from operational issues. Completed unknowns
 also appear on book details. The intro identifies fast mode as requested and notes
@@ -167,3 +167,35 @@ Startup interface failures show Could not start the interface, hide the spinner,
 and retain a working Abort and close button. Closing waits for safe backend cleanup
 even when the catalog has already opened. The loading screen must not imply that
 a missing packaged module is slow catalog work.
+
+## Enriched adventure filters — 2026-11-08
+
+Adventures has a native Adventure filters disclosure to keep the default search
+compact. Fieldsets group players, levels, settings, locations and in-world dates.
+Each numeric endpoint has labeled From/To inputs; settings, locations, dates and
+calendars use multi-select lists populated from saved enrichment. Selections match
+any chosen value within a list, and combine across different lists. Completion-status selectors separate unknown, unfinished and fully known
+results, with an explicit Agnostic setting option. An active-control count stays
+visible when collapsed. Reset clears all filters; Back preserves them and the page.
+
+The sort selector includes each endpoint and text category in both directions.
+Help explains numeric endpoints, first-alphabetical-entry sorting and source-text
+date ordering. Adventure results display enrichment in dedicated table columns, safely rendered
+as text. Library retains only the general filters and compact book rows.
+The fieldsets stack at narrow widths; all controls use native keyboard behavior.
+
+The Adventures table has columns for Book, Min players, Max players, Min level,
+Max level, Settings, Locations, In-world dates, Calendars and Release date. Book
+buttons open the existing details view; Back preserves that tab's filters/page.
+Column headers toggle direction and expose aria-sort. The table scrolls within a
+labeled, focusable region on narrow windows. Library, Adventures and Enrichment
+use a shared three-tab keyboard navigation (arrows/Home/End), with independent
+Library/Adventures state. Neither Library filters nor tab selection limits Enrich.
+The dashboard explains that books without covers can still be enriched.
+
+Multi-select lists use native keyboard behavior and display six rows. Help explains
+Ctrl/Command selection, Ctrl + Space, exact values and the empty-selection meaning.
+Each list has Previous/Next choice-page buttons, Clear selection, selected count,
+loading/empty feedback and a Retry values button after failure. Choices are paged
+100 at a time; selected values from other pages stay pinned in an optgroup.
+No free-text enrichment filter input remains. General library search is unchanged.

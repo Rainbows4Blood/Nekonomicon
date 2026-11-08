@@ -15,6 +15,7 @@ test("enrichment tabs, run controls, results and stale catalog replies",async()=
  ui.render({...state,enrichment:{running:true,state:"waiting",message:"Retrying OpenAI access automatically"}});assert.equal($("enrichState").textContent,"Waiting for OpenAI");assert(!$("enrichStop").disabled);
  ui.render({...state,enrichment:{running:true,state:"stopping",active:[{stage:"waiting"}]}});assert.equal($("enrichState").textContent,"Stopping");assert($("enrichStop").disabled);
  $("enrichmentSubTab").onkeydown({key:"Home",preventDefault(){}});assert(!$("librarySubPanel").hidden);
+ $("librarySubTab").onkeydown({key:"ArrowRight",preventDefault(){}});assert(!$("adventuresSubPanel").hidden);assert($("librarySubPanel").hidden);assert.equal($("adventuresSubTab").getAttribute("aria-selected"),"true");$("adventuresSubTab").onkeydown({key:"ArrowRight",preventDefault(){}});assert(!$("enrichmentSubPanel").hidden);assert.match($("enrichCoverNote").textContent,/without an image/);
  deferred=new Promise(r=>resolve=r);$("enrichmentSubTab").onclick();state={...state,dataFolder:"two",loading:true};ui.render(state);resolve({counts:{adventures:999},books:[]});await tick();assert.equal($("enrichEligible").textContent,"—");
  delete globalThis.document;
 });

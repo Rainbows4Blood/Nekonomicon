@@ -394,7 +394,10 @@ OpenAI can return a different processing tier. Never
 substitute a model. Each request sends the entire original JSON, including included
 resources, and a data-URL JPEG of the complete local cover at up to 1600 pixels.
 Input JSON is bounded to 16 MiB without truncation; cover input to 20 MiB/16 MP.
-Missing, unsafe or unsupported covers produce a recoverable issue and no inference.
+Covers are optional. Missing records/files, unreadable, unsafe or unsupported
+covers are omitted from inference; do not read unsafe paths or send a placeholder
+image. Full JSON still goes to both passes, and the prompt states when no cover is
+available. Database lookup failures and cancellation remain operational errors.
 No authenticated image URL or storefront cookie is sent to OpenAI.
 
 Two passes enforce source-first behavior: the first exposes no tools; if requested
@@ -438,7 +441,7 @@ attempt limit; each wait is cancellable and outside the request timeout. Retryin
 does not repeat a completed storefront pass, erase checkpoints, increment web-pass
 counts, or save an issue. Show waiting books and retry times in the dashboard.
 No other automatic inference retries. Authentication, model and other service
-rejections stop the run; individual cover/output issues remain visible and permit
+rejections stop the run; individual output issues remain visible and permit
 other books to continue. Each unfinished book is visited
 at most once per pass. Stopping/shutdown closes in-flight work and retains commits.
 On restart, selecting unfinished enrichments recovers progress without a separate
@@ -499,3 +502,68 @@ Bound settings to 16 names, locations to 64, dates to 32, each label to 512 byte
 and evidence/source lists to existing limits. Show five completion counts plus
 eligible/pending book counts, all facts and evidence in dashboard and details, and
 distinguish not-yet-enriched from completed unknown context fields.
+
+### Enrichment browsing (2026-11-08)
+
+Schema v10 adds enrichment_terms, a compact per-product projection for four numeric
+endpoints, setting names (including explicitly Agnostic), locations, in-world date
+text and calendar names. The primary covering index supports per-book sort-key
+lookups; a kind/value/source/product index supports term and numeric filtering.
+Apply database update backfills saved enrichment in bounded 64-row reads inside
+the existing cancellable atomic schema transaction. Opening does not backfill.
+SaveEnrichment updates the result and terms atomically under the one write owner.
+Catalog maintenance preserves the projection; live source refresh excludes stale
+enrichment by version and fetched timestamp, as for details and enrichment runs.
+
+Adventures filters AND together with all existing search filters. Setting, location,
+calendar and in-world date filters accept lists of exact case/accent-folded values.
+Values within one list OR together; different lists AND together. Empty selections
+add no constraint. Each numeric endpoint accepts
+independent inclusive From/To bounds (players 1–10000, levels 0–10000); null does
+not match a numeric constraint. Status is per enrichment: Fully known, completed
+with unknown values (including partial numeric endpoints), or not finished/not
+enriched. Stale results are not enriched. Agnostic is explicit and may coexist
+with named settings. Pending filters include only eligible adventures, never non-adventure books.
+
+Numeric sorts compare numeric values, while multi-value sorts use the first
+alphabetical value. In-world dates are sorted as source text, not inferred calendar
+chronology. Every sort offers ascending/descending with missing values last and
+source/product tie breakers. Pagination cursors include all filters. Only current
+adventure enrichment appears in browsing. Adventures displays separate numeric
+endpoint, settings, locations, dates and calendar columns linking through to the
+existing full details. Queries read projected terms instead of scanning raw
+responses or parsing result JSON for every filter. Broad enriched sorts still
+order matching catalogue rows; the indexes do not eliminate that final sort.
+
+### Library and Adventures separation
+
+D&D has Library, Adventures and Enrichment tabs. Library includes all indexed D&D
+books with general filters and name/release-date sorting. Adventures requires
+b.is_adventure=1 in the database query before sorting/limiting; unknown/unattempted
+enrichment does not exclude an adventure. It has general plus enrichment filters
+and sorts, and a semantic table with cover/title, four numeric endpoints, settings,
+locations, in-world dates, calendars and release date. Headers toggle sorting and
+announce aria-sort. A keyboard-focusable region supports horizontal scrolling at
+narrow widths. Each tab keeps independent filters, cursor history and details;
+cursors encode adventure scope and cannot be reused across scopes.
+
+No schema change beyond v10 is needed. Existing classification and indexes remain
+authoritative. Pressing Enrich retries old cover failures using full JSON without
+an image, clears the issue after success and retains completed unknown semantics.
+
+### Multi-select enrichment choices
+
+The four named/text enrichment filters use native multi-select lists populated
+from current, eligible adventure enrichment across both stores, independent of
+active browsing filters. The existing kind/value index enumerates distinct folded
+keys, returning one original saved label per key. Read at most 100 choices per
+request with keyset pagination; keep at most 64 selected values per field and
+pin selections from other pages in the list. Do not expose stale enrichment,
+non-adventures or outdated catalog projections as available choices. Agnostic
+is an explicit setting value; unknown completion remains in the status selectors.
+
+Selected keys use indexed equality matching, not substring matching. Query cursor
+fingerprints hash the entire filter/sort/scope structure so large selections do
+not exceed cursor limits. Folder changes clear selections and discard stale
+choice replies. Enrichment/catalog completion and Refresh reload choices while
+preserving selections in the same catalog. No schema change beyond v10.
