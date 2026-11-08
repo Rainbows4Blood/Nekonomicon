@@ -12,7 +12,7 @@ import (
 	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 )
 
-func TestExplicitUpgradeKeepsMaintenanceOnUnfinishedStorefront(t *testing.T) {
+func TestExplicitUpgradeKeepsCrawlerStorefrontAndDatabaseMaintenance(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	dir := t.TempDir()
@@ -57,8 +57,8 @@ func TestExplicitUpgradeKeepsMaintenanceOnUnfinishedStorefront(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.maintenance.Wait(context.Background())
-	if a.Snapshot().Maintenance.Job.Source != storefront.DMSGuild {
-		t.Fatal("maintenance retained pre-upgrade storefront")
+	if a.Snapshot().Maintenance.Job.Source != "" {
+		t.Fatal("maintenance was limited to a storefront")
 	}
 }
 
@@ -120,5 +120,43 @@ func TestSourceSwitchAndUnfinishedCatalogSelection(t *testing.T) {
 	}
 	if a.Snapshot().Catalogued != 0 {
 		t.Fatal("counts leaked across storefronts")
+	}
+}
+
+func TestLegacyMaintenanceDoesNotChangeCrawlerSelection(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.BeginGroups(ctx, storefront.DMSGuild); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetGroupsState(ctx, storefront.DMSGuild, "paused"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{source: storefront.DTRPG}
+	if err = a.openCatalog(ctx, dir, false); err != nil {
+		t.Fatal(err)
+	}
+	defer a.shutdown(ctx)
+	if a.Snapshot().Source != storefront.DTRPG || !a.Snapshot().Maintenance.Held || a.Snapshot().Maintenance.Action != "groups" {
+		t.Fatal("maintenance changed crawler selection or lost recovery", a.Snapshot())
+	}
+	if err = a.EndMaintenance(); err != nil {
+		t.Fatal(err)
+	}
+	manager := a.maintenance
+	if err = a.SelectSource("dmsguild"); err != nil {
+		t.Fatal(err)
+	}
+	if a.maintenance != manager {
+		t.Fatal("crawler selection replaced database maintenance")
 	}
 }

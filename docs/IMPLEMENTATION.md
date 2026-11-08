@@ -383,3 +383,365 @@ group evaluation and transactional raw/derived writes; excludes HTTP and covers.
 The fixture mostly exercises nonmatching group outcomes, so this does not measure
 full-catalog group backfill or predict its runtime. Query-plan tests separately
 verify indexed membership reads; no throughput promise is made.
+
+## Database-wide maintenance (2026-11-07)
+
+The storefront selector and connection indicator now belong only to the Crawler
+panel. Metadata extraction, D&D grouping, maintenance counts and issue pages cover
+both storefronts regardless of the Crawler selection. Each issue names its store.
+The existing per-store checkpoints are claimed atomically and held through the
+whole pass; each cursor still commits with its own results. Resuming an older
+paused pass retains its cursor and adds the other storefront's pending work.
+No schema update or automatic backfill was added.
+
+Regression coverage includes overlapping IDs, failure at the storefront boundary,
+restart recovery without retrying already-visited failures, atomic claim rollback,
+whole-database End, legacy paused tasks and independent Crawler selection.
+Windows Go tests, go vet, frontend checks and the Wails production build pass.
+Headless Chromium checked 1440, 980 and 390 px layouts, every maintenance state,
+selector visibility and keyboard tab navigation. Native Windows interaction and
+Linux execution were not repeated. The build retains the previously documented
+Wails binding-generator warning for store.Run.
+
+## D&D browsing, search and fantasy workspace (2026-11-07)
+
+Schema v5 adds an explicit browsing/search read model with separate recoverable
+maintenance. Live commits maintain the same projection atomically. No catalog
+migration, backfill or live crawl was performed against the user's catalog.
+Tests cover all sort directions and keyset boundaries (including missing dates
+and overlapping store IDs), edition/official filters, search scopes and escaped
+input, stale exclusion, refreshed FTS deletion, rollback of raw/derived/FTS state,
+v4 inspection and cancelled upgrade, both-store index recovery, independent task
+ownership, safe descriptions, catalog-scoped cover reads and thumbnail bounds.
+Query-plan assertions verify sort indexes and FTS usage without raw-response scans.
+Frontend tests cover controls, pagination, details/back, safe text, late replies,
+three-tab keyboard navigation and restoration of the original theme. Headless
+Chromium checks at 1440, 980 and 390 px covered list/details and every index state.
+Native Windows interaction and Linux execution have not been repeated.
+
+Measurement: Windows/amd64, Go 1.27.1, AMD Ryzen AI 7 350 (16 logical CPUs), temporary
+local SQLite, WAL/synchronous=NORMAL, schema-v5 primary keys, six listing sort
+indexes, product lookup index and FTS5 external-content index. Query dataset:
+10,000 synthetic D&D products split between both stores, two edition memberships
+each, about 2 KiB per response/description; 100 contain the selective search term.
+200 measured queries per case, setup excluded. Mean per 50-book page: name 0.423 ms,
+next keyset page 0.469 ms, date 0.478 ms, edition+official 0.346 ms, selective FTS
+3.013 ms, broad FTS matching all 10,000 books 108.991 ms. The broad case sorts the
+matching subset. These measurements exclude HTTP, covers and UI rendering and do
+not predict a full production catalog's latency or storage requirements.
+
+The separate realistic-size storage benchmark (200 distinct IDs derived from the
+40,197-byte supplied response, metadata/group/catalog projection included) measured
+3.612 ms/record, 11.13 MB/s, 918,369 B/op and 13,772 allocations/op. It excludes HTTP
+and covers; this fixture does not exercise a large D&D FTS body. Original responses
+are preserved and none from authenticated accounts were added as fixtures.
+
+References for the index implementation: [SQLite FTS5](https://www.sqlite.org/fts5.html)
+and [SQLite query planning](https://www.sqlite.org/queryplanner.html).
+
+The final Windows Go suite, go vet, frontend checks and Wails production build
+pass. The existing store.Run binding-generator warning remains. Schema-upgrade
+recovery also preserves a paused task from the prior schema. Description text
+uses a single bounded text node, avoiding a DOM node per source line.
+
+
+## Storefront search, indexing completion, OpenAI connection (2026-11-07)
+
+Schema v6 adds source-aware listing indexes and a covering product freshness
+index. Opening stays inspection-only; Apply database update installs indexes over
+existing rows. Already indexed books need no re-extraction. Storefront filters are
+independent of Crawler selection and participate in cursor validation and FTS.
+
+The reported first-run symptom has a concrete failure path: completed jobs were
+persisted before three sequential summary reads shared one 15-second deadline.
+A late summary timeout then changed only the UI to blocked/held. Counts now have
+separate budgets and cannot override persisted completion. Stale counts have an
+explicit Refresh counts recovery path. The covering index avoids response-JSON
+pages during counts. The user's original failure was not reproduced on their
+catalog; the timeout/completion mismatch is covered by a deterministic regression.
+
+OpenAI uses the documented public-client ChatGPT OAuth flow in native Go. The
+sidebar supports saved registrations, browser login/cancellation, plan-permission
+status and sign-out. AES-GCM encrypted credentials live outside the catalog; a
+separate OS key and cross-process file lock protect storage/rotating refreshes.
+OIDC verification uses coreos/go-oidc. No model requests or enrichment run yet.
+Future Agents SDK work must obey the ChatGPT-plan Responses API limitations in
+SPEC section 16; no SDK runner was added in this connection-only step.
+
+Validation: gofmt, go test ./..., go vet ./..., frontend checks, and a Windows
+Wails production build pass. Local HTTP OAuth tests cover PKCE/callback binding,
+forged state, issuer/audience/expiry/nonce/signature rejection, identity changes,
+issued-client retention after invalid_grant, identity-only grants, cancellation,
+refresh, sign-out, uncertain revocation, encrypted storage/tampering/keyring failure
+and another app instance holding the credential lock. Frontend tests cover account
+controls and new-account selection. Headless Chromium verifies 1440/980/390 px,
+D&D filters/details, theme changes, keyboard navigation, count notices, and OpenAI
+controls. No live ChatGPT sign-in, inference, catalog migration, or crawl was run.
+Native Windows UI and Linux execution were not exercised. The race detector was
+not run (this environment has CGO_ENABLED=0). The existing store.Run binding warning
+remains; the production executable is build/bin/Nekonomicon.exe.
+
+Additional measurements: same Windows/amd64 Ryzen AI 7 350 environment and
+10,000-book synthetic query dataset described above, now schema v6 (six additional
+source sort indexes plus products_freshness), WAL/synchronous=NORMAL, 200 iterations,
+setup excluded. A 50-book storefront/date page averaged 0.400 ms; storefront +
+edition + official/name averaged 0.422 ms. The 200-record, 40,197-byte-response
+storage benchmark averaged 2.997 ms/record, 13.41 MB/s. Measurements exclude HTTP,
+covers and rendering; they are not a production latency or throughput guarantee.
+
+
+## Adventure enrichment (2026-11-07)
+
+Schema v7 and catalog projection v2 add adventure eligibility and separate enrichment
+results. The existing database-update + browsing-index maintenance path handles old
+records; live crawl commits derive the same eligibility. Numeric min_player,
+max_player, min_level and max_level columns accompany per-range evidence and model,
+source revision, cover hash and outcome. Catalog reindexing preserves enrichment.
+
+The fixed-model Go Responses client sends full original JSON plus a local cover,
+uses strict structured output, and exposes web search only in a missing-fields
+fallback pass. The first pass is saved before fallback. One cancellable worker
+selects missing current fields from both storefronts; repeated passes skip complete
+books. No model substitution, automatic inference retry, broad live crawl or live
+AI enrichment was used during validation. API/auth/plan compatibility still needs
+a real-account enrichment check; local HTTP tests verify the actual request shape.
+
+Validation passed: gofmt, go test ./... -timeout 60s, go vet ./..., eight frontend
+tests, and Wails production build at build/bin/Nekonomicon.exe. Tests include source
+eligibility, same IDs across stores, complete/missing/partial selection, image/JSON
+inputs, conditional web fallback, preserved populated values, cancellation between
+passes, incomplete/failed streams, quota stops, numeric persistence, write rollback,
+stale-source rejection, restart recovery and reindex preservation. Headless Chromium
+at 1440, 980 and 390 px verifies both D&D subtabs, all enrichment states, keyboard
+navigation, pagination and safe text/evidence rendering. Native Windows interaction,
+Linux execution and the race detector were not run. The prior store.Run Wails binding
+warning remains; it does not stop the production build.
+
+Read-only taxonomy verification sampled 200 products per storefront using indexed
+joins and returned only taxonomy IDs/labels/contexts. No real product responses or
+credentials were copied into the repository. The source fixture independently
+confirms the shared Campaigns, Adventures & Modules filter.
+
+Storage measurement: Windows/amd64, Go 1.27.1, AMD Ryzen AI 7 350 (16 logical CPUs),
+temporary local SQLite WAL/synchronous=NORMAL, schema v7 including D&D source sort,
+freshness and adventure indexes. Two hundred IDs derived from the supplied
+40,197-byte response, full live projections, setup excluded: 2.396 ms/record,
+16.78 MB/s, 918,841 B/op. This excludes HTTP, covers, AI requests and UI rendering;
+it does not predict enrichment cost/latency or production throughput.
+## Parallel enrichment and completed unknowns — 7 November 2026
+
+Enrichment now runs up to four books concurrently, with unbuffered dispatch and
+checkpoint channels and one coordinator owning database writes. A worker waits for
+its storefront checkpoint to commit before web fallback. Stops and global failures
+cancel requests and join the workers; restart selects unfinished enrichments from
+saved records, so out-of-order completion cannot skip earlier unfinished books.
+OAuth token refresh/storage is serialized independently of inference requests.
+
+Schema v8 adds players_done and levels_done separately from numeric coverage.
+Successful web fallback completes the requested enrichments even when endpoints
+remain null. Unknown values count as enriched, are skipped on subsequent runs for
+the same source revision, and appear as Unknown in results and book details.
+Transport, cover, validation and storage failures remain operational issues.
+The dashboard shows all active books/stages and counts enriched books with unknown
+values separately from failures. No concurrency or task configuration is added.
+
+Apply database update explicitly through Data maintenance. Opening only inspects
+compatibility. Migration retains existing data and known completions atomically;
+legacy unknown results require one follow-up because v7 did not distinguish a
+finished fallback from an interrupted storefront checkpoint. A v7 catalog does not
+need its browsing index rebuilt for this completion-tracking update.
+
+Validation: gofmt, go test ./... -timeout 60s, go vet ./..., frontend check/test,
+and wails build -platform windows/amd64 passed. Added behavior tests cover the
+four-request bound, concurrent progress snapshots, out-of-order completion and
+resume, cancellation, global failure cancellation, failed fallback retry,
+null/partial successful completion, preservation of completed unknown ranges,
+atomic schema-upgrade failure/retry, and completed unknowns across database reopen.
+Offline headless Chromium checked 1440/980/390 px layouts, four active-book cards,
+keyboard navigation and all run states using synthetic bridge responses. No live
+inference, broad crawl or migration of the user's catalog was performed. Race
+instrumentation was unavailable in this CGO-disabled environment without GCC.
+
+Delivered the primary build/bin/Nekonomicon.exe; no alternative executable name.
+The existing Wails binding-generator diagnostic about store.Run remains unchanged;
+the production build succeeds.
+
+## Web-search final-answer parsing fix — 7 November 2026
+
+Reproduced the reported "OpenAI returned incomplete structured output" error with
+a completed Responses stream containing commentary, a web-search result and valid
+final JSON with null endpoints. The client concatenated all assistant output_text
+messages; the resulting commentary-plus-JSON string could not be decoded. Prior
+unknown-result tests used a fake provider and did not exercise this response shape.
+
+The parser now selects the final_answer message, or the last unphased message for
+responses without phase metadata. It combines text parts only within that message,
+ignores commentary/tool output, and still rejects refusal, incomplete final
+messages, malformed JSON and omitted required fields. Error text distinguishes
+those cases without exposing model response contents. Nullable endpoints retain
+the existing successful-completion semantics.
+
+Regression coverage exercises the actual local HTTP client through the runner and
+SQLite writer, starting with saved errors and unknown storefront checkpoints. The
+retry clears errors, counts both books as enriched with unknown values, and sends
+no requests for those books on the next run. Additional cases cover populated
+ranges, unphased responses, commentary-only output, refused/incomplete answers and
+invalid final output after an earlier valid draft.
+
+Validation: gofmt, go test ./... -timeout 60s, go vet ./..., frontend check/test and
+the Windows Wails build passed. No live AI calls or catalog mutation were required.
+The primary build/bin/Nekonomicon.exe was replaced. No additional schema update is
+needed; Enrich retries previously failed records and preserves completed records.
+
+Protocol reference: [OpenAI Responses assistant message phases](https://developers.openai.com/api/docs/guides/reasoning#phase-parameter).
+
+## Retaining streamed answers — 7 November 2026
+
+A bounded live request for the reported H4 book established the actual remaining
+failure: response.output_item.done carried a completed final_answer message, while
+response.completed reported status=completed with an empty output list. The client
+discarded the earlier message. The preceding synthetic tests assumed the final
+envelope repeated all output, so they did not catch this account's stream shape.
+
+The client now retains completed message items by output_index, deduplicates them,
+reconciles terminal items and selects the final answer in output order. Successful
+response.completed remains mandatory: a completed item followed by a failed,
+incomplete, interrupted or missing terminal event cannot be committed. Retained
+items are capped at 256, alongside the existing 32 MiB stream/8 MiB event bounds.
+No schema or UI changes are required. Enrich retries affected pending records.
+
+Live validation used the connected account and exact requested GPT-6.1 Terra model:
+H4 The Throne of Bloodstone and FRC1 Ruins of Adventure were copied with their full
+saved responses, covers and checkpoints into a temporary catalog. Both ran through
+the normal concurrent runner, real HTTP client, parser and SQLite writer. Outcome:
+2 enriched, 2 with unknown values, 0 issues and 0 pending; both player and level
+completion counts were 2. H4 retained known levels with unknown players; FRC1
+completed with both ranges unknown. A second run had no work. The temporary catalog
+was removed; the original catalog was opened read-only and was not changed.
+Diagnostics printed event types/statuses and counts only, not credentials or raw
+response content. No broad live crawl or enrichment run was started.
+
+Regression tests reproduce this empty-terminal-output shape through HTTP and the
+runner, including retry of saved failures, durable completion and no repeated work.
+They also cover terminal failures after a completed item, incomplete final messages,
+commentary-only streams, duplicate and out-of-order item events.
+
+Protocol reference: [Responses streaming events](https://developers.openai.com/api/reference/resources/responses/streaming-events).
+
+Validation: gofmt, go test ./... -timeout 60s, go vet ./..., frontend check/test and
+the production Windows Wails build passed. The primary build/bin/Nekonomicon.exe
+was replaced; no schema update or alternative executable is needed.
+
+## Sixteen concurrent enrichments and fast mode — 7 November 2026
+
+Raised the fixed book pool to 16 while retaining unbuffered dispatch, one writer,
+serialized credential refresh, cancellation and source-revision completion markers.
+Both storefront and web-fallback requests now set service_tier=priority, the API's
+fast-mode setting, while preserving GPT-6.1 Terra and the existing reasoning policy.
+The dashboard shows up to 16 active books and describes fast mode as requested.
+
+The concurrency tests now use 32 eligible adventures to verify 16 simultaneous
+requests, the upper bound, out-of-order completion/resume and cancellation of the
+remaining 15 requests after a global failure. HTTP tests verify the service-tier
+setting on both passes. Frontend tests and headless Chromium cover 16 active cards
+at 1440/980/390 px, keyboard access and run states.
+
+A bounded live check used synthetic JSON and an image with the connected account.
+The literal fast service-tier value returned HTTP 400 on this route. The documented
+priority equivalent succeeded twice with valid structured output, but the server
+reported service_tier=default. Actual fast processing was therefore not confirmed;
+requests opt in, while service availability determines the tier served. No real
+catalog records were sent or modified for these checks.
+
+Validation: gofmt, go test ./... -timeout 60s, go vet ./..., frontend checks, layout
+checks and the Windows Wails build passed. Replaced build/bin/Nekonomicon.exe. No
+schema migration is required.
+
+Reference: [OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode).
+
+## Rate-limit recovery — 7 November 2026
+
+Enrichment now keeps running after HTTP 429 or structured streaming usage/rate-limit
+errors. A shared gate pauses new requests across the 16 workers, backs off from
+2 seconds to 5 minutes with jitter, and honors longer Retry-After deadlines. Only
+one request probes after the delay, then the remaining books resume. Concurrent
+rejections increase the delay once per cooldown; older successes cannot clear a
+newer wait. Explicit rate-limit retries continue until recovery or Stop, as requested.
+The existing three-minute timeout applies to each attempt, outside the cancellable
+wait. Model availability checks use the same recovery behavior.
+
+Retries preserve the current pass and saved storefront checkpoint. Rate-limit
+errors do not become saved issues or increment progress/web-pass counts. The
+dashboard labels waiting books and the next retry time, and keeps Stop available.
+Other authentication, service and invalid-output errors retain their existing
+handling. No schema change or real-account request was needed.
+
+Validation: local HTTP tests exercise model-check 429, inference 429, streamed
+usage rejection, exact request replay, checkpoint preservation and completed unknown
+results. Gate tests cover exponential growth/cap, server deadlines, concurrent
+rejections, single-probe release and cancellation. Stop during a one-hour server
+wait exits promptly without saving issues, and a new run starts normally.
+gofmt, go test ./... -timeout 60s, go vet ./..., frontend checks and headless Chromium
+checks at 1440/980/390 px passed. The primary build/bin/Nekonomicon.exe was replaced
+using wails build.
+
+References: [OpenAI rate limits](https://developers.openai.com/api/docs/guides/rate-limits),
+[ChatGPT-plan error codes](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery).
+
+## Settings, locations and fictional dates — 8 November 2026
+
+Added three fixed adventure enrichments alongside player and character-level ranges.
+Settings hold multiple names and an independent evidence-backed agnostic flag;
+named settings and explicit adaptability can coexist. Empty/unknown results do not
+imply agnostic. Locations retain optional setting associations. Dates preserve the
+source's fictional date/range or relative wording, with optional calendar and
+setting associations; the prompt explicitly excludes publication timestamps and
+assumed campaign years. Each field carries evidence and source URLs.
+
+Schema v9 adds JSON, known-value and done columns for each new enrichment. The
+explicit maintenance update preserves existing player/level completion, including
+unknowns, and makes the three new enrichments pending. Opening remains read-only
+with respect to schema; no browsing-index rebuild is needed. The existing source
+revision checks and live-crawl catalog projection apply to all five enrichments.
+Source-first passes finish known facts; fallback finishes remaining fields even
+when unknown. Failed/cancelled requests retain checkpoints and completion markers.
+The 16-worker pool, fast-mode request and shared rate-limit backoff remain in use.
+
+The dashboard now shows seven summary tiles (five enrichment counts, eligible and
+pending books). Dashboard results and book details show settings, locations, dates
+and evidence, with completed unknowns distinguished from pending context fields.
+Text uses safe DOM rendering, including model-provided names and source strings.
+
+Validation: synthetic local HTTP/stream and SQLite tests cover the expanded output,
+required unknown fields, agnostic versus unknown, multiple settings, optional
+calendar associations, checkpoint recovery, preservation of finished fields,
+completed unknowns and skipped repeat runs. A recreated v8 catalog verifies
+explicit upgrade, blocked pre-upgrade crawling, transaction rollback on failure,
+cancellation, retry and preservation of numeric and unknown legacy results.
+Go tests and vet, frontend checks, and headless Chromium at 1440/980/390 px passed.
+Layout checks include context results, book details, run states and keyboard access.
+No live enrichment requests were made for validation. Wails build replaced the
+primary build/bin/Nekonomicon.exe; users apply schema v9 through Data maintenance.
+
+## Packaged startup regression — 8 November 2026
+
+The setting/location/date UI introduced enrichment-format.js without adding it to
+main.go's explicit embedded asset list. Both books.js and enrichment.js imported
+the missing file, so the main frontend module never initialized. The static
+catalog-opening overlay remained visible and its Abort handler was never attached.
+Source-directory browser tests and a successful compilation did not catch this.
+
+Added the missing embedded module and a small independent bootstrap script that
+wires safe closing before importing the main app. A module-loading failure now
+shows an interface error and hides the spinner. AbortAndClose also accepts closing
+after catalog opening finishes, because the frontend may still be loading or have
+failed; it always follows the existing shutdown/rollback/lock-release path.
+
+The new dependency test reproduced the missing embedded module before the fix and
+passes afterward. An opt-in Chromium test consumes only bytes read from the Go
+embedded filesystem and checks ready startup, loading abort, and deliberately
+missing-module recovery at 1440 and 390 px. Backend tests verify closing after
+opening, lock release and unchanged schema, alongside cancellation/rollback tests.
+Go tests/vet, frontend checks and the Windows Wails build passed. The primary
+build/bin/Nekonomicon.exe was replaced. No user catalog repair, migration or live
+enrichment was performed during this fix.

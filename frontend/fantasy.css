@@ -1,0 +1,81 @@
+/* The D&D workspace changes the whole shell into an illuminated fantasy archive. */
+.fantasy { color-scheme: light; --bg:#e8ddc4; --surface:#f7efdd; --soft:#eadbbd; --ink:#302b23; --sub:#665944; --line:#cfbc96; --accent:#6d332a; --accent-soft:#e4d0ad; --on:#fff5df; --warn:#794915; --warn-soft:#f3e2be; --success:#526c4a; }
+.fantasy body { background:#e8ddc4; }
+.fantasy .sidebar { background:radial-gradient(ellipse at 50% 0,#233c36,#11231f 80%); border-right:1px solid #9d7d46; color:#e7d6b0; }
+.fantasy .brand { font-family:Georgia,"Palatino Linotype",serif; font-weight:normal; letter-spacing:.4px; }
+.fantasy .sidebar .mark { color:#d4ad62; }
+.fantasy .sidebar .brand-caption,.fantasy .sidebar .eyebrow,.fantasy .sidebar .note,.fantasy .sidebar .folder,.fantasy .sidebar-caption { color:#baaf91; }
+.fantasy .sidebar .tabs button { color:#d4c6a7; }
+.fantasy .sidebar .tabs [aria-selected="true"] { color:#ffe3a4;background:#344336;border:1px solid #a3844a;box-shadow:inset 0 0 0 3px #21382e; }
+.fantasy .storage-panel { border-color:#4a5440; }
+.fantasy .status-bar { background:#11231f;border-color:#8d7245;color:#c7b793; }
+.fantasy .workspace { background:radial-gradient(ellipse at top left,#fff6df66,transparent 70%),repeating-linear-gradient(8deg,#58451d03 0 1px,transparent 1px 5px),#e8ddc4; }
+.fantasy .workspace-header { min-height:216px; padding:35px 36px; background:linear-gradient(90deg,#061c21cc 0%,#061c2144 58%,#061c2111),url('/assets/dnd-library.png') center right/cover; border-bottom:3px double #ba985e; color:#ffebbf; }
+.fantasy .workspace-header h1 { font:normal 38px/1.25 Georgia,"Palatino Linotype",serif;letter-spacing:.3px; margin:12px 0; text-shadow:0 2px 8px #000; }
+.fantasy .workspace-header .eyebrow { color:#d3b77a;letter-spacing:2.8px; }
+.fantasy .workspace-header .muted { color:#d1c5aa;font-family:Georgia,serif;font-style:italic;font-size:15px; }
+.fantasy .workspace-tag { display:none; }
+.fantasy .workspace-panel { padding:26px 32px; }
+.fantasy :focus-visible { outline-color:#a96027; }
+.fantasy .sidebar :focus-visible { outline-color:#ffd28b; }
+.book-filters { display:grid; grid-template-columns:minmax(220px,2fr) repeat(2,minmax(150px,1fr)); gap:16px; padding:24px; border:1px solid #c1a676; background:#f8f0deb8; box-shadow:inset 0 0 0 4px #fdf7e677,0 3px 12px #44301509; }
+.book-filters label { display:grid;gap:6px;font-size:11px;letter-spacing:.5px;color:#665237; }
+.book-filters input { width:100%;min-width:0;min-height:38px;border:1px solid var(--line);border-radius:4px;padding:8px 12px;background:#fffcf3;color:var(--ink);font:13px "Segoe UI",sans-serif; }
+.book-filters select { width:100%;background:#fffcf3; }
+.book-filters button { align-self:end; }
+.book-filters .book-search { grid-column:span 2; }
+.book-gate { display:flex;justify-content:space-between;align-items:center;gap:16px;padding:15px 18px;margin-bottom:20px;background:#f8edcf;border:1px solid #c5a86f;color:#665130; }
+.book-gate button { flex-shrink:0; }
+.library-toolbar { display:flex;justify-content:space-between;align-items:center;gap:12px;margin:22px 0 4px;color:#69583c; }
+.book-hint { color:#76664c;font-size:11px;margin-bottom:16px; }
+.book-list { list-style:none;padding:0;margin:0;border-top:1px solid #c4aa7e; }
+.book-list li { border-bottom:1px solid #d4c29d; }
+.book-row { display:grid;grid-template-columns:58px minmax(0,1fr) 145px 15px;gap:20px;align-items:center;width:100%;padding:18px 10px;text-align:left;border:0;border-radius:0;background:transparent;font-weight:normal; }
+.book-row:hover:enabled { background:#faf2df; }
+.book-cover { display:flex;position:relative;width:58px;height:80px;align-items:center;justify-content:center;overflow:hidden;border:1px solid #6a4f32;background:linear-gradient(90deg,#463c29 0 6px,#65543b 7px,#8b7350 9px,#52422e 12px);box-shadow:2px 3px 6px #33261938; }
+.cover-fallback { font:30px Georgia,serif;color:#dcc48a; }
+.book-cover img { position:absolute;width:100%;height:100%;object-fit:contain;background:#e4d7bc; }
+.book-name { display:block;font:normal 19px/1.35 Georgia,"Palatino Linotype",serif;color:#3f3021;overflow-wrap:anywhere; }
+.book-publisher { display:block;color:#71624e;font-size:12px;margin:4px 0 7px;overflow-wrap:anywhere; }
+.book-tags { display:flex;flex-wrap:wrap;gap:5px; }
+.edition-tag,.official-tag { display:inline-block;font-size:10px;line-height:1.6;padding:1px 7px;border:1px solid #c9b07e;color:#685432;border-radius:2px;background:#f6eacd; }
+.official-tag { border-color:#b2b49a;color:#4d644a;background:#e6e6d5; }
+.book-date { color:#766348;font-size:12px;text-align:right;overflow-wrap:anywhere; }
+.book-arrow { font:24px Georgia,serif;color:#927244; }
+.book-pagination { display:flex;justify-content:center;align-items:center;gap:22px;margin-top:26px; }
+.library-empty { padding:50px 20px;text-align:center;color:#756144; }
+.library-empty>span { font:46px Georgia,serif; }
+.library-empty h2 { font-family:Georgia,serif;margin:12px; }
+.library-empty p { max-width:500px;margin:auto; }
+.book-back { margin-bottom:20px;background:transparent; }
+.book-detail { padding:32px;border:1px solid #c3a879;background:#faf2e0b8;box-shadow:inset 0 0 0 5px #fef7e7; }
+.book-detail-heading { display:grid;grid-template-columns:150px minmax(0,1fr);gap:30px;padding-bottom:30px;border-bottom:1px solid #cfbb91; }
+.book-cover-large { width:150px;height:210px; }
+.book-cover-large .cover-fallback { font-size:60px; }
+.book-detail h2 { font:normal 32px/1.25 Georgia,"Palatino Linotype",serif;margin:10px 0;overflow-wrap:anywhere; }
+.book-detail h3 { font:normal 20px/1.4 Georgia,"Palatino Linotype",serif;color:#694b26;margin-bottom:14px; }
+.book-release { margin:16px 0;color:#71624e;font-size:12px; }
+.book-description { margin:30px 0;max-width:85ch;font:15px/1.85 Georgia,"Palatino Linotype",serif;overflow-wrap:anywhere; }
+.book-description p+p { margin-top:13px; }
+.book-detail-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px; }
+.book-detail-section { padding-top:20px;border-top:1px solid #d4c29d; }
+.book-facts { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:9px 16px;margin:0;font-size:12px;overflow-wrap:anywhere; }
+.book-facts dt { color:#786648; }.book-facts dd { margin:0; }
+.book-source-notes { margin-top:30px;border-top:1px solid #d4c29d;padding-top:15px;overflow-wrap:anywhere; }
+.book-source-notes summary { cursor:pointer; }
+.book-provenance { color:#7f725c;font-size:11px;margin-top:28px;overflow-wrap:anywhere; }
+@media(max-width:1100px){.book-filters {grid-template-columns:repeat(2,minmax(0,1fr));}.book-row {grid-template-columns:52px minmax(0,1fr) 115px;gap:14px;}.book-arrow{display:none;}}
+@media(max-width:760px){.fantasy .workspace-header{padding:28px 20px;min-height:185px;}.fantasy .workspace-header h1{font-size:30px;}.fantasy .workspace-panel{padding:18px 16px;}.book-detail{padding:20px;}.book-detail-heading{grid-template-columns:90px minmax(0,1fr);gap:20px;}.book-cover-large{width:90px;height:126px;}.book-detail h2{font-size:25px;}.book-detail-grid{grid-template-columns:1fr;}.book-gate{flex-wrap:wrap;}.book-row{grid-template-columns:48px minmax(0,1fr);gap:6px 14px;padding:16px 0;}.book-cover{width:48px;height:68px;grid-row:span 2;}.book-cover-large{width:90px;height:126px;}.book-date{grid-column:2;text-align:left;}.book-name{font-size:18px;}.book-detail .book-tags{margin-top:12px;}.book-filters{padding:16px;gap:12px;}.book-filters .book-search{grid-column:1/-1;}.library-toolbar{align-items:flex-start;font-size:12px;}.book-detail-heading .primary{font-size:12px;}}
+@media(prefers-reduced-motion:no-preference){.book-row{transition:background-color .12s;}}
+
+.description-text { white-space:pre-line; }
+
+.dnd-subtabs { display:flex;gap:8px;margin-bottom:24px;border-bottom:1px solid var(--line);padding-bottom:12px; }
+.dnd-subtabs [aria-selected="true"] { background:#743b2e;color:#fff8e7;border-color:#743b2e; }
+.enrich-intro,.enrich-progress { padding:24px;background:#fff8e6b0;border:1px solid #c1a676;margin-bottom:24px; }
+.enrich-intro h2 { font:28px Georgia,serif;margin:10px 0; }.enrich-intro p {margin-bottom:14px;}
+.enrich-metrics {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:24px 0;}.enrich-metrics div {border-bottom:2px solid #ac8c52;padding:14px 0;}.enrich-metrics span{display:block;font-size:12px;color:#685237;}.enrich-metrics strong{display:block;font:30px Georgia,serif;margin-top:12px;}
+.enrich-progress progress{width:100%;margin:16px 0;accent-color:#744130;}.enrich-results{list-style:none;padding:0;}.enrich-results li{padding:20px 0;border-bottom:1px solid #bca577;}.enrich-results h4{font:20px Georgia,serif;margin:0 0 8px;}.enrich-results p{margin:8px 0;white-space:pre-wrap;overflow-wrap:anywhere;}.enrich-results details{margin-top:12px;}.enrich-source{font-size:12px;color:#685237;}
+@media(max-width:760px){.enrich-metrics{grid-template-columns:repeat(2,minmax(0,1fr));}.enrich-intro,.enrich-progress{padding:18px;}}
+
+.enrich-active{list-style:none;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}.enrich-active li{border:1px solid #c1a676;padding:14px;overflow-wrap:anywhere;}.enrich-active strong,.enrich-active span{display:block;}.enrich-active span,.enrich-active p{font-size:12px;color:#685237;margin:8px 0 0;}@media(max-width:760px){.enrich-active{grid-template-columns:1fr;}}

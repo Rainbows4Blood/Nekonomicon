@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/Rainbows4Blood/Nekonomicon/internal/engine"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/enrichment"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/maintenance"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/openaiauth"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/store"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -19,6 +21,7 @@ func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.ctx, a.cancel = context.WithCancel(ctx)
+	a.openAI = openaiauth.New(a.ctx, configDir())
 	a.source, a.folder = storefront.DTRPG, defaultDataDir()
 	var settings preferences
 	if b, err := os.ReadFile(filepath.Join(configDir(), "settings.json")); err == nil && len(b) < 8192 && json.Unmarshal(b, &settings) == nil && filepath.IsAbs(settings.DataFolder) {
@@ -116,15 +119,6 @@ func (a *App) openCatalog(ctx context.Context, folder string, persist bool) erro
 		if run != nil && source != run.Source {
 			source, ready = run.Source, false
 		}
-		if s.Version() == store.SchemaVersion {
-			maintenanceSource, err := s.MaintenanceSource(ctx)
-			if err != nil {
-				return err
-			}
-			if maintenanceSource != "" && maintenanceSource != source {
-				source, ready = maintenanceSource, false
-			}
-		}
 	}
 	if n == nil || n.Source() != source {
 		n, vault, note = session(source)
@@ -137,7 +131,7 @@ func (a *App) openCatalog(ctx context.Context, folder string, persist bool) erro
 		}
 		_ = e.SetReady(ready)
 	}
-	m, err := maintenance.New(ctx, s, source)
+	m, err := maintenance.New(ctx, s)
 	if err != nil {
 		return err
 	}
@@ -158,6 +152,7 @@ func (a *App) openCatalog(ctx context.Context, folder string, persist bool) erro
 	a.source, a.network, a.vault, a.authNote = source, n, vault, note
 	a.store, a.engine, a.folder, a.storageError = s, e, s.Dir, ""
 	a.maintenance = m
+	a.enrichment = &enrichment.Runner{}
 	installed = true
 	a.mu.Unlock()
 	// Keep loading/close waits active until the previous connection is closed.
@@ -206,12 +201,8 @@ func (a *App) beforeClose(context.Context) bool {
 }
 
 func (a *App) AbortAndClose() error {
-	a.mu.Lock()
-	allowed := a.loading || a.closing
-	a.mu.Unlock()
-	if !allowed {
-		return errors.New("Catalog loading has finished")
-	}
+	// The UI may still be loading (or failed to load) after the catalog opens.
+	// A close request must also work in that case and uses normal safe shutdown.
 	a.requestClose()
 	return nil
 }
@@ -245,8 +236,14 @@ func (a *App) shutdown(context.Context) {
 			<-done
 		}
 		a.mu.Lock()
-		e, s, cancel, m := a.engine, a.store, a.cancel, a.maintenance
+		e, s, cancel, m, ai, enrich := a.engine, a.store, a.cancel, a.maintenance, a.openAI, a.enrichment
 		a.mu.Unlock()
+		if enrich != nil {
+			enrich.Shutdown()
+		}
+		if ai != nil {
+			ai.Shutdown()
+		}
 		if m != nil {
 			m.Shutdown()
 		}

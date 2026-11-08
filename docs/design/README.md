@@ -6,8 +6,9 @@ The production UI in `frontend/` now uses the entire app window. It replaces the
 centered utility sheet and promotional heading with a desktop shell. Default
 window size is 1440 × 900; the minimum remains 390 × 560.
 
-- The persistent left sidebar owns identity, the native storefront selector,
-  Crawler / Data maintenance navigation and the local catalog folder.
+- The persistent left sidebar owns identity, Crawler / Data maintenance
+  navigation and the local catalog folder. The native storefront selector and
+  connection status belong inside the Crawler panel.
 - The main workspace scrolls independently of the sidebar and bottom status bar.
   Its header names the current task. There is no maximum-width wrapper.
 - Crawler commands are grouped above a flexible run overview and a connection
@@ -41,12 +42,12 @@ it is not the current visual specification. Its numbers are illustrative.
 
 Catalog opening uses a blocking, keyboard-accessible inspection overlay. Opening
 never initializes, upgrades, or backfills data. Incompatible schemas disable
-crawling with a link to Data maintenance. The shared storefront
+crawling with a link to Data maintenance. The Crawler storefront
 selector and Local data section remain available when no work owns the catalog.
 
 Data maintenance offers separate Database structure and Product metadata tasks.
 Apply database update explicitly initializes/upgrades tables; Extract metadata
-processes missing/outdated/failed projections for the selected storefront.
+processes missing/outdated/failed projections across the whole database.
 Schema updates show stages and a Cancel database update button. Extraction
 shows committed/total progress, current/pending counts, warnings, failures, and
 Pause/Resume/End controls. Warning-only results count as complete. Issue lists
@@ -86,12 +87,83 @@ Robots exclusions appear as a quiet skipped-sitemap count that remains visible
 during fetching. They do not pause a run. Discovery progress is retained across
 pause/resume while the process stays open; reopening the app rediscovers it.
 
-The production screen now offers DriveThruRPG and DM’s Guild through a labeled native selector. It locks during active/paused runs and connection operations. Switching resets connection readiness, clears manual cookie fields, updates host hints and the test product ID, and displays only that store’s catalog/errors. Keyboard focus returns to the selector after switching. The original offline mockup remains a DTRPG illustration. Data maintenance is implemented; catalog browsing, remote storage, and infrastructure settings remain out of scope. No external assets or icon package are required by this mockup.
+The production screen now offers DriveThruRPG and DM’s Guild through a labeled native selector. It locks during active/paused runs and connection operations. Switching resets connection readiness, clears manual cookie fields, updates host hints and the test product ID, and displays only that store’s catalog/errors. Keyboard focus returns to the selector after switching. The original offline mockup remains a DTRPG illustration. Data maintenance is implemented; D&D browsing is now implemented; other catalog browsing, remote storage, and infrastructure settings remain out of scope. No external assets or icon package are required by this mockup.
 
 Data maintenance also offers **D&D edition groups**, with checked/pending counts,
 Build/Resume grouping, and the shared committed progress controls. Metadata and
 grouping cannot overlap or replace a paused task. The issues disclosure has a
 labeled task selector so grouping ambiguity and failures can be reviewed without
 mixing them with metadata diagnostics. B/X's Basic-family meaning and conservative
-official-status behavior are explained beside the task. Groups are rebuilt per
-storefront without sign-in. Existing responsive and keyboard behavior is retained.
+official-status behavior are explained beside the task. Groups are rebuilt across both
+storefronts without sign-in. Existing responsive and keyboard behavior is retained.
+
+Data maintenance is independent of the Crawler storefront selection. Counts,
+committed progress and issue pages include both storefronts, with the source
+named beside each issue. Its footer reads All storefronts. Switching tabs
+preserves the Crawler selection and its existing run and connection locks.
+
+## D&D workspace — 2026-11-07
+
+Navigation now contains Crawler, Data maintenance and D&D. D&D activates the
+fantasy theme across the shell, with a dark green sidebar, gold trim, parchment
+list/detail surfaces, serif book titles and the embedded library painting.
+Leaving D&D restores the default light/dark workspace. The theme adds no remote
+fonts, styles or imagery. Artwork and its generation prompt are recorded in
+[ARTWORK.md](ARTWORK.md).
+
+The library has a bounded, paginated list with small local covers, title, publisher,
+storefront, edition badges, official status and release date. Search scope, edition,
+official status and four sort choices use labeled native controls. Details replace
+the list in the same tab and provide a focused heading and Back control; Back
+retains filters/page/focus. Empty, unindexed, incompatible-schema, image-unavailable,
+loading and failed-query states have explicit messages. Async responses from old
+folders or superseded searches are discarded.
+
+Data maintenance gains Browsing & search index with committed progress, independent
+Pause/Resume/End ownership and its own issue selector. Indexing covers all saved
+responses; only grouped D&D products appear in the library. No work starts merely
+by opening a catalog or selecting a tab.
+
+
+## Storefront search and OpenAI connection (2026-11-07)
+
+D&D adds a Storefront filter beside the edition and official-status controls.
+It defaults to Both storefronts, resets pagination when changed, and does not alter
+Crawler selection. Maintenance still applies to the whole database. A failed count
+refresh shows a notice without replacing the completed task state or offering a
+spurious Resume; Refresh counts retries the read.
+
+A compact OpenAI disclosure in the shared sidebar provides a saved-account picker,
+Continue with ChatGPT, Cancel sign-in, Sign out and account-access settings. The
+browser owns authentication and consent; the app displays only connection state and
+validated account labels. Controls remain available independently of catalog work.
+It follows the active workspace theme and stacks above Local data on narrow windows.
+
+
+## D&D enrichment dashboard
+
+D&D's secondary tablist switches between Library and Enrichment without leaving
+the fantasy workspace. Arrow keys/Home/End and labeled panels work from the keyboard.
+Enrich is the single start/retry action. Stop appears during a run. The page explains
+what leaves the computer, shows up to 16 active books with their source/web stages,
+five enrichment completion counts plus eligible and pending books, committed run outcomes, cover prerequisites and paginated
+results/evidence. Unknown endpoints display as Unknown and successful unknown
+lookups count as enriched, separately from operational issues. Completed unknowns
+also appear on book details. The intro identifies fast mode as requested and notes
+that OpenAI may use standard processing. No model/worker/task configuration is exposed.
+Results also appear under Adventure enrichment on the book details page.
+Usage/rate-limit waits keep Stop enabled and Enrich disabled. Waiting books show
+Waiting for OpenAI, with an automatic retry time or a message that another retry
+is in progress. The run heading shows Waiting for OpenAI when all active books
+are waiting, and during an access-check cooldown. Waiting does not add an issue.
+
+Setting, location and in-world date results appear in the dashboard and book
+details with evidence. A named setting may coexist with Agnostic (any campaign
+setting). Unknown (enriched) and Not enriched yet remain distinct. Dates are
+explicitly labeled In-world dates; named calendars and settings remain attached
+to their dates/locations. The seven summary tiles wrap at narrow widths.
+
+Startup interface failures show Could not start the interface, hide the spinner,
+and retain a working Abort and close button. Closing waits for safe backend cleanup
+even when the catalog has already opened. The loading screen must not imply that
+a missing packaged module is slow catalog work.

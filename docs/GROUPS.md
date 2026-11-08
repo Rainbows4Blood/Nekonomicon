@@ -96,7 +96,7 @@ rules; additional evidence would require a reviewed rule revision.
 Schema v4 explicitly adds `catalog_groups`, `product_groups`, `group_state`, and
 `group_jobs`; it does not copy raw product JSON or backfill memberships. Opening
 a catalog still only inspects compatibility. Apply database update first, then
-run **Build D&D groups** for each storefront. Metadata extraction is independent:
+run **Build D&D groups** for the whole database across both storefronts. Metadata extraction is independent:
 the grouping task reads original responses through the shared extractor and does
 not require a prior metadata backfill.
 
@@ -124,7 +124,8 @@ including a combined-store mode that preserves separate source identities.
 Freshness checks use product/state primary-key lookups; no response parsing or
 full product-table scan occurs during group browsing. Maintenance coverage counts
 still scan state/product keys on explicit refresh/open, not on every UI event.
-There is no catalog browsing workspace in this change.
+The D&D workspace added on 2026-11-07 uses these same rules through the separate
+browsing/search projection described in SPEC.md section 15.
 
 Example indexed query for future displays:
 

@@ -48,7 +48,8 @@ h3 { font-size: 13px; font-weight: 600; }
 .mark { width: 32px; height: 34px; color: var(--accent); flex-shrink: 0; }
 .brand { display: block; font-size: 17px; font-weight: 650; letter-spacing: -.4px; }
 .brand-caption { display: block; color: var(--sub); font-size: 10px; margin-top: 1px; }
-.source { display: grid; gap: 8px; padding: 0 6px; }
+.crawler-source { margin-bottom: 20px; }
+.source { display: grid; gap: 8px; max-width: 280px; }
 .source select { width: 100%; }
 .connection-state { color: var(--sub); font-size: 11px; display: flex; gap: 7px; align-items: center; }
 .connection-state::before, .status-dot { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--sub); flex-shrink: 0; }
@@ -199,3 +200,15 @@ details[open] > summary::after { transform: rotate(45deg); }
   .phase-track strong { font-size: 11px; } .run-actions { gap: 6px; } .run-actions button { font-size: 12px; padding-inline: 8px; }
   .run-actions .primary { min-width: 95px; } .section-heading { margin-bottom: 12px; } .push-right { margin-left: 0; }
 }
+
+.ai-connection { padding:16px 6px 0;border-top:1px solid var(--line);min-width:0; }
+.ai-connection summary { display:grid;grid-template-columns:16px minmax(0,1fr) 12px;align-items:center;gap:7px;font-size:12px; }
+.ai-connection summary::after { grid-column:3;grid-row:1; }
+.ai-connection summary .note { grid-column:2;grid-row:2;margin:0;font-size:10px; }
+.ai-connection .panel { padding:12px 0 0; }
+.ai-connection .note { overflow-wrap:anywhere; }
+.ai-connection select { width:100%;margin:6px 0 12px; }
+.ai-connection .actions { gap:8px; }
+.ai-connection button { font-size:12px;white-space:normal; }
+.ai-connection .text-button { margin-top:12px; }
+@media(max-width:760px) { .ai-connection { grid-column:1/-1;padding:12px 0 0; } }

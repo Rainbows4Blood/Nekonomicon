@@ -120,6 +120,39 @@ func TestLoadingRemainsResponsiveAndCloseWaitsForRollback(t *testing.T) {
 	}
 }
 
+func TestAbortAfterCatalogOpenedClosesSafely(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := loadingFixture(t)
+	if err := savePreferences(dir, "dtrpg"); err != nil {
+		t.Fatal(err)
+	}
+	quit := make(chan struct{})
+	a := &App{quit: func(context.Context) { close(quit) }}
+	a.startup(context.Background())
+	defer a.shutdown(context.Background())
+	waitSignal(t, a.loadDone)
+	if a.Snapshot().Loading {
+		t.Fatal("fixture did not finish opening")
+	}
+	// The frontend may still be on its loading overlay because an import failed.
+	if err := a.AbortAndClose(); err != nil {
+		t.Fatal(err)
+	}
+	waitSignal(t, quit)
+	if a.beforeClose(context.Background()) {
+		t.Fatal("safe shutdown did not finish")
+	}
+	s, err := store.InspectContext(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatal("close did not release the catalog", err)
+	}
+	defer s.Close()
+	if s.Version() != 1 {
+		t.Fatal("closing changed the catalog schema")
+	}
+}
+
 func TestAsyncCatalogOpenCompletesAndFailedSwitchKeepsPrevious(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

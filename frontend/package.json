@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node --check app.js && node --check model.js && node --check maintenance.js",
-    "test": "node --test model.test.js renderer.test.js",
+    "build": "node --check bootstrap.js && node --check app.js && node --check model.js && node --check maintenance.js && node --check books.js && node --check openai.js && node --check enrichment.js && node --check enrichment-format.js",
+    "test": "node --test model.test.js renderer.test.js books.test.js openai.test.js enrichment.test.js",
     "check": "npm run build && npm test"
   },
   "devDependencies": {

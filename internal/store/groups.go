@@ -87,7 +87,7 @@ func (w *groupsWriter) write(ctx context.Context, source storefront.Source, id i
 }
 func (s *Store) GroupsSummary(ctx context.Context, source storefront.Source) (GroupsSummary, error) {
 	var v GroupsSummary
-	err := s.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status IN ('complete','warnings')),0),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status='warnings'),0),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status='failed'),0) FROM products p LEFT JOIN group_state m USING(source,product_id) WHERE p.source=?`, groups.Version, groups.Version, groups.Version, source).Scan(&v.Total, &v.Current, &v.Warnings, &v.Failed)
+	err := s.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status IN ('complete','warnings')),0),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status='warnings'),0),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status='failed'),0) FROM products p INDEXED BY products_freshness LEFT JOIN group_state m USING(source,product_id) WHERE (?='' OR p.source=?)`, groups.Version, groups.Version, groups.Version, source, source).Scan(&v.Total, &v.Current, &v.Warnings, &v.Failed)
 	v.Pending = v.Total - v.Current
 	return v, err
 }
@@ -119,7 +119,7 @@ func (s *Store) BeginGroups(ctx context.Context, source storefront.Source) (Grou
 		return j, errors.New("Finish the other storefront's maintenance first")
 	}
 	var otherTask int
-	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM metadata_jobs WHERE state IN ('running','paused','blocked')").Scan(&otherTask); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM metadata_jobs WHERE state IN ('running','paused','blocked'))+(SELECT count(*) FROM catalog_jobs WHERE state IN ('running','paused','blocked'))").Scan(&otherTask); err != nil {
 		return j, err
 	}
 	if otherTask > 0 {
@@ -150,7 +150,7 @@ func (s *Store) SetGroupsState(ctx context.Context, source storefront.Source, st
 }
 
 func (s *Store) GroupsPage(ctx context.Context, source storefront.Source, after int64) ([]MetadataRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.product_id,p.fetched_at,p.response_json FROM products p LEFT JOIN group_state m USING(source,product_id) WHERE p.source=? AND p.product_id>? AND (m.version IS NULL OR m.version<>? OR m.response_fetched_at<>p.fetched_at OR m.status='failed') ORDER BY p.product_id LIMIT 64`, source, after, groups.Version)
+	rows, err := s.db.QueryContext(ctx, `SELECT p.product_id,p.fetched_at,p.response_json FROM products p INDEXED BY products_freshness LEFT JOIN group_state m USING(source,product_id) WHERE p.source=? AND p.product_id>? AND (m.version IS NULL OR m.version<>? OR m.response_fetched_at<>p.fetched_at OR m.status='failed') ORDER BY p.product_id LIMIT 64`, source, after, groups.Version)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (s *Store) CommitGroups(ctx context.Context, j GroupsJob, rows []MetadataRo
 }
 
 func (s *Store) GroupsIssues(ctx context.Context, source storefront.Source, offset int) ([]MetadataIssue, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.product_id,m.status,m.message,m.warnings_json FROM group_state m JOIN products p USING(source,product_id) WHERE m.source=? AND m.version=? AND m.response_fetched_at=p.fetched_at AND m.status IN ('warnings','failed') ORDER BY m.product_id LIMIT 50 OFFSET ?`, source, groups.Version, max(0, offset))
+	rows, err := s.db.QueryContext(ctx, `SELECT m.source,m.product_id,m.status,m.message,m.warnings_json FROM group_state m JOIN products p USING(source,product_id) WHERE (?='' OR m.source=?) AND m.version=? AND m.response_fetched_at=p.fetched_at AND m.status IN ('warnings','failed') ORDER BY m.source,m.product_id LIMIT 50 OFFSET ?`, source, source, groups.Version, max(0, offset))
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +238,7 @@ func (s *Store) GroupsIssues(ctx context.Context, source storefront.Source, offs
 	for rows.Next() {
 		var r MetadataIssue
 		var raw string
-		if err = rows.Scan(&r.ID, &r.Status, &r.Message, &raw); err != nil {
+		if err = rows.Scan(&r.Source, &r.ID, &r.Status, &r.Message, &raw); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(raw), &r.Warnings); err != nil {

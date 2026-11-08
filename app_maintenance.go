@@ -7,11 +7,13 @@ import (
 
 	"github.com/Rainbows4Blood/Nekonomicon/internal/engine"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/store"
-	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 )
 
 // Caller holds the app mutex. Paused maintenance owns the catalog until ended.
 func (a *App) maintenanceHeld() bool {
+	if a.enrichmentRunning() {
+		return true
+	}
 	if a.maintenance == nil {
 		return false
 	}
@@ -21,39 +23,39 @@ func (a *App) maintenanceHeld() bool {
 func (a *App) StartMaintenance(action string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.busy || a.closing || a.loading || a.maintenance == nil {
+	if a.busy || a.closing || a.loading || a.maintenance == nil || a.enrichmentRunning() {
 		return errors.New("Local storage is not available for maintenance")
 	}
 	if a.engine != nil && (a.engine.Snapshot().Running || a.engine.Snapshot().Run != nil) {
 		return errors.New("End the unfinished crawl before starting maintenance")
 	}
-	return a.maintenance.Start(action, func() (storefront.Source, error) {
+	return a.maintenance.Start(action, func() error {
 		// Called after an explicit schema update has committed, outside UI locks.
 		a.mu.Lock()
 		s, n, vault, note := a.store, a.network, a.vault, a.authNote
 		a.mu.Unlock()
 		run, err := s.Active()
 		if err != nil {
-			return "", err
+			return err
 		}
 		if run != nil && run.Source != n.Source() {
 			n, vault, note = session(run.Source)
 		}
 		e, err := engine.New(s, n, engine.DefaultConfig())
 		if err != nil {
-			return "", err
+			return err
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		if a.closing {
-			return n.Source(), nil
+			return nil
 		}
 		if a.source != n.Source() {
 			a.source = n.Source()
 			a.network, a.vault, a.authNote = n, vault, note
 		}
 		a.engine = e
-		return a.source, nil
+		return nil
 	})
 }
 func (a *App) PauseMaintenance() error {
@@ -92,11 +94,11 @@ func (a *App) MaintenanceIssues(offset int) ([]store.MetadataIssue, error) {
 		a.mu.Unlock()
 		return []store.MetadataIssue{}, nil
 	}
-	s, source := a.store, a.source
+	s := a.store
 	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return s.MetadataIssues(ctx, source, offset)
+	return s.MetadataIssues(ctx, "", offset)
 }
 
 func (a *App) GroupIssues(offset int) ([]store.MetadataIssue, error) {
@@ -105,9 +107,9 @@ func (a *App) GroupIssues(offset int) ([]store.MetadataIssue, error) {
 		a.mu.Unlock()
 		return []store.MetadataIssue{}, nil
 	}
-	s, source := a.store, a.source
+	s := a.store
 	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return s.GroupsIssues(ctx, source, offset)
+	return s.GroupsIssues(ctx, "", offset)
 }

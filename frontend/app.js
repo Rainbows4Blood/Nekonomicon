@@ -1,4 +1,7 @@
 import { controls, progress, labels } from "./model.js";
+import { openAIUI } from "./openai.js";
+import { enrichmentUI } from "./enrichment.js";
+import { booksUI } from "./books.js";
 import { maintenanceUI } from "./maintenance.js";
 const $ = (id) => document.getElementById(id),
   api = window.go?.main?.App;
@@ -9,7 +12,10 @@ let state = {},
   lastState = "",
   localBusy = false,
   lastRendered = "";
-const maintenance = maintenanceUI({ api, getState: () => state, invoke });
+const openAI = openAIUI({ api, invoke });
+const books = booksUI({ api, getState: () => state });
+const enrichment = enrichmentUI({api,getState:()=>state,invoke,books});
+const maintenance = maintenanceUI({ api, getState: () => state, invoke, onSelect: name => enrichment.activate(name === "dnd") });
 function message(text) {
   $("notice").textContent = text;
   $("notice").hidden = !text;
@@ -39,7 +45,10 @@ function render(s) {
   const sourceChanged = state.source !== s.source;
   const priorLoadingError = state.loadingError;
   state = s;
-  maintenance.render(s, s.busy || localBusy);
+  maintenance.render(s, s.busy || localBusy || s.enrichment?.running);
+  enrichment.render(s);
+  books.render(s);
+  openAI.render(s, localBusy || s.enrichment?.running);
   const c = controls({ ...s, busy: s.busy || localBusy }),
     p = progress(s);
   $("primary").textContent = c.primary;
@@ -86,7 +95,6 @@ function render(s) {
       ? "Connection ready"
       : "Sign-in / check needed";
   $("connection").dataset.ready = String(Boolean(s.connectionReady && !s.busy));
-  text("footerSource", s.source === "dmsguild" ? "DM’s Guild" : "DriveThruRPG");
   text("cataloguedCovers", Number(s.cataloguedCovers || 0).toLocaleString());
   text("runErrors", ((s.productErrors || 0) + (s.coverErrors || 0)).toLocaleString());
   const needsAttention = ["setup", "maintenance_required", "blocked_auth", "blocked_storage", "completed_errors"].includes(s.state) || Boolean(s.metadataWarnings || s.metadataFailures);

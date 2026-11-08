@@ -60,11 +60,11 @@ test("actual renderer handles all run states and committed progress", async () =
   assert.equal($("websiteCookie").value, "");
   assert.equal($("apiCookie").value, "");
   assert.equal($("primary").disabled, true);
-  // Maintenance is explicit, source-scoped, and available without sign-in.
+  // Maintenance is explicit, database-wide, and available without sign-in.
   let maintenanceActions = [];
   window.go.main.App.RefreshMaintenance = async () => {};
   window.go.main.App.StartMaintenance = async action => { maintenanceActions.push(action); };
-  window.go.main.App.MaintenanceIssues = async () => [{ id: 42, status: "warnings", message: "<script>unsafe</script>", warnings: ["pagecount: invalid"] }];
+  window.go.main.App.MaintenanceIssues = async () => [{ source: "dmsguild", id: 42, status: "warnings", message: "<script>unsafe</script>", warnings: ["pagecount: invalid"] }];
   const schemaRequired = { needsSchema: true, schemaVersion: 2, state: "schema_required", summary: {} };
   event({ ...initial, storageAvailable: true, storageReady: false, connectionReady: false, maintenance: schemaRequired });
   assert.equal($("primary").disabled, true);
@@ -77,6 +77,8 @@ test("actual renderer handles all run states and committed progress", async () =
   assert.equal($("crawlPanel").hidden, true);
   assert.equal($("maintenanceTab").getAttribute("aria-selected"), "true");
   assert.equal($("workspaceTitle").textContent, "Data maintenance");
+  assert.equal($("source").closest("[role=tabpanel]"), $("crawlPanel"));
+  assert.equal($("footerSource").textContent, "All storefronts");
   $("maintenanceTab").onkeydown({ key: "ArrowUp", preventDefault() {} });
   assert.equal($("crawlPanel").hidden, false);
   assert.equal($("workspaceTitle").textContent, "Crawler");
@@ -100,7 +102,7 @@ test("actual renderer handles all run states and committed progress", async () =
   event({ ...initial, storageAvailable:true, maintenance:{state:"completed",action:"groups",groups:{current:12,pending:0}} });
   assert.equal($("buildGroups").disabled,true);
   event({ ...initial, storageAvailable: true, storageReady: false, maintenance: schemaRequired });
-  const task = { state: "extracting", running: true, held: true, needsSchema: false, summary: { total: 100, current: 0, pending: 100 }, job: { processed: 64, total: 100, warned: 2, failed: 1 } };
+  const task = { action:"metadata", state: "extracting", running: true, held: true, needsSchema: false, summary: { total: 100, current: 0, pending: 100 }, job: { processed: 64, total: 100, warned: 2, failed: 1 } };
   event({ ...initial, storageAvailable: true, maintenance: task });
   assert.equal($("source").disabled, true);
   assert.equal($("primary").disabled, true);
@@ -115,6 +117,7 @@ test("actual renderer handles all run states and committed progress", async () =
   await $("reloadMetadataIssues").onclick();
   assert.equal($("metadataIssueList").querySelector("script"), null);
   assert.match($("metadataIssueList").textContent, /unsafe/);
+  assert.match($("metadataIssueList").textContent, /DM’s Guild · Product 42/);
   $("crawlTab").onclick();
   assert.equal($("crawlPanel").hidden, false);
   rows = [{ id: 7, phase: "product", kind: "schema", status: 200, message: "<img src=x onerror=alert(1)>" }];

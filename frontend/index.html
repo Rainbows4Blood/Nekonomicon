@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><meta name="color-scheme" content="light dark" />
-  <title>Nekonomicon</title><link rel="stylesheet" href="/style.css" />
+  <title>Nekonomicon</title><link rel="stylesheet" href="/style.css" /><link rel="stylesheet" href="/fantasy.css" />
 </head>
 <body>
   <svg class="icon-definitions" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+    <symbol id="icon-book" viewBox="0 0 24 24"><path d="M12 5v15M3 4c4-1 7 0 9 2 2-2 5-3 9-2v15c-4-1-7 0-9 2-2-2-5-3-9-2Z"/></symbol>
     <symbol id="icon-crawl" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7m6-4 4 3-4 3Z" /></symbol>
     <symbol id="icon-data" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/></symbol>
     <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7V4h7l2 3h9v13H3Z"/></symbol>
@@ -18,17 +19,23 @@
         <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M5 13 6 4l8 5h4l8-5 1 9v8c0 5-5 8-11 8S5 26 5 21Z" stroke="currentColor" stroke-width="1.7"/><path d="M11 17h1m8 0h1m-7 5 2 2 2-2" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
         <div><span class="brand">Nekonomicon</span><span class="brand-caption">Your local book archive</span></div>
       </div>
-      <div class="source">
-        <label for="source" class="eyebrow">Storefront</label>
-        <select id="source"><option value="dtrpg">DriveThruRPG</option><option value="dmsguild">DM’s Guild</option></select>
-        <span class="connection-state" id="connection">Checking local storage…</span>
-      </div>
       <div class="navigation"><span class="eyebrow nav-caption">Workspace</span>
         <div class="tabs" role="tablist" aria-label="Workspace" aria-orientation="vertical">
           <button id="crawlTab" role="tab" aria-selected="true" aria-controls="crawlPanel"><svg class="icon" aria-hidden="true"><use href="#icon-crawl"/></svg>Crawler</button>
           <button id="maintenanceTab" role="tab" aria-selected="false" aria-controls="maintenancePanel" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#icon-data"/></svg>Data maintenance</button>
+          <button id="dndTab" role="tab" aria-selected="false" aria-controls="dndPanel" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#icon-book"/></svg>D&amp;D</button>
         </div>
       </div>
+      <details id="openAIConnection" class="ai-connection">
+        <summary><svg class="icon" aria-hidden="true"><use href="#icon-link"/></svg><span>OpenAI</span><span id="openAIConnectionLabel" class="note">Not connected</span></summary>
+        <div class="panel">
+          <p id="openAIStatus" class="note" role="status" aria-live="polite"></p>
+          <label for="openAIAccount" class="control-label">ChatGPT account</label><select id="openAIAccount"><option value="">New ChatGPT account</option></select>
+          <div class="actions"><button id="openAISignIn">Continue with ChatGPT</button><button id="openAICancel" hidden>Cancel sign-in</button><button id="openAISignOut" hidden>Sign out</button></div>
+          <button id="openAISettings" class="text-button">Manage ChatGPT access &amp; usage</button>
+          <p class="note">Eligible ChatGPT plans can authorize AI usage. Signing in does not send your catalog or start enrichment.</p>
+        </div>
+      </details>
       <details id="storage" class="storage-panel" open>
         <summary><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg>Local data</summary>
         <div class="panel"><p id="folder" class="folder"></p><button id="chooseFolder">Choose data folder</button><p class="note">Opens another catalog without moving existing records or covers.</p></div>
@@ -43,6 +50,11 @@
       <p id="notice" class="notice" role="alert" hidden></p>
       <div id="crawlPanel" class="workspace-panel" role="tabpanel" aria-labelledby="crawlTab" tabindex="0">
         <div id="maintenanceGate" class="maintenance-gate" hidden><span id="maintenanceGateMessage">Database needs maintenance before crawling.</span><button id="openMaintenance">Open data maintenance</button></div>
+        <div class="source crawler-source">
+          <label for="source" class="eyebrow">Storefront</label>
+          <select id="source"><option value="dtrpg">DriveThruRPG</option><option value="dmsguild">DM’s Guild</option></select>
+          <span class="connection-state" id="connection">Checking local storage…</span>
+        </div>
         <div class="command-bar">
           <label class="control-label">Run mode<select id="mode"><option value="new">New products</option><option value="refresh">Refresh all</option><option value="retry">Retry failed</option></select></label>
           <label class="option"><input type="checkbox" id="covers" checked />Download covers after records</label>
@@ -111,21 +123,28 @@
             </section>
             <section class="surface maintenance-task" aria-labelledby="groupsTitle">
               <div class="section-heading"><span class="eyebrow">Saved product responses</span><span class="state-badge">Local operation</span></div>
-              <h2 id="groupsTitle">D&D edition groups</h2><p class="muted">Group Original, Basic, AD&D and D&D editions through 5.5, with official-product status. Both storefronts use the same rules; run this task for each storefront.</p>
+              <h2 id="groupsTitle">D&D edition groups</h2><p class="muted">Group Original, Basic, AD&D and D&D editions through 5.5, with official-product status. This task processes saved responses from both storefronts.</p>
               <div class="metrics"><div class="metric"><span>Checked for groups</span><strong id="groupsCurrent">—</strong></div><div class="metric"><span>Needs grouping</span><strong id="groupsPending">—</strong></div></div>
               <p id="groupsCoverage" class="note"></p><div class="actions"><button id="buildGroups" class="primary">Build D&D groups</button></div>
               <p class="note">B/X includes Basic, BECMI and Rules Cyclopedia. Ambiguous editions remain unresolved. Official status uses publisher evidence; community and compatibility-only products stay unofficial. New crawls update groups automatically.</p>
+            </section>
+            <section class="surface maintenance-task" aria-labelledby="catalogTitle">
+              <div class="section-heading"><span class="eyebrow">D&amp;D library</span><span class="state-badge">Local operation</span></div>
+              <h2 id="catalogTitle">Browsing &amp; search index</h2><p class="muted">Index names, descriptions, editions, official status and release dates across both storefronts. Uses the same edition rules as grouping. New crawls update this index automatically.</p>
+              <div class="metrics"><div class="metric"><span>Responses indexed</span><strong id="catalogCurrent">—</strong></div><div class="metric"><span>Needs indexing</span><strong id="catalogPending">—</strong></div></div>
+              <p id="catalogCoverage" class="note"></p><div class="actions"><button id="buildCatalog" class="primary">Build D&amp;D browsing index</button></div>
             </section>
             <section class="surface maintenance-progress" aria-label="Maintenance progress">
               <div class="section-heading"><span class="eyebrow">Maintenance progress</span></div>
               <div class="statusline"><h2 id="maintenanceState">Ready</h2><span id="maintenanceCount" class="muted"></span></div>
               <progress id="maintenanceProgress" max="1" value="0" aria-label="Committed maintenance progress"></progress>
+              <p id="maintenanceCountsWarning" class="notice" role="status" hidden>Some counts are out of date. Saved work is safe. Use Refresh counts to try again.</p>
               <p id="maintenanceMessage" class="status-note" role="status" aria-live="polite"></p>
               <div class="actions"><button id="pauseMaintenance" hidden>Pause</button><button id="endMaintenance" hidden>End maintenance</button></div>
             </section>
             <details id="metadataIssues" class="surface" open>
               <summary><svg class="icon" aria-hidden="true"><use href="#icon-activity"/></svg>Maintenance warnings &amp; failures</summary>
-              <div class="panel"><label for="issueTask">Task</label><select id="issueTask"><option value="metadata">Product metadata</option><option value="groups">D&D groups</option></select><p class="note">Warnings preserve supported results. Failed records can be retried with the corresponding task. Ambiguous editions need better source evidence.</p><ol id="metadataIssueList" class="errors"></ol><div class="actions pagination"><button id="metadataPrevious">Previous</button><span id="metadataPage" class="note">Page 1</span><button id="metadataNext">Next</button><button id="reloadMetadataIssues" class="push-right">Refresh issues</button></div></div>
+              <div class="panel"><label for="issueTask">Task</label><select id="issueTask"><option value="metadata">Product metadata</option><option value="groups">D&D groups</option><option value="catalog">Browsing &amp; search index</option></select><p class="note">Warnings preserve supported results. Failed records can be retried with the corresponding task. Ambiguous editions need better source evidence.</p><ol id="metadataIssueList" class="errors"></ol><div class="actions pagination"><button id="metadataPrevious">Previous</button><span id="metadataPage" class="note">Page 1</span><button id="metadataNext">Next</button><button id="reloadMetadataIssues" class="push-right">Refresh issues</button></div></div>
             </details>
           </div>
           <aside class="inspector" aria-label="Database maintenance">
@@ -134,10 +153,39 @@
           </aside>
         </div>
       </div>
+      <div id="dndPanel" class="workspace-panel" role="tabpanel" aria-labelledby="dndTab" tabindex="0" hidden>
+        <div id="bookGate" class="book-gate" hidden><p id="bookGateMessage"></p><button id="bookMaintenance">Open data maintenance</button></div>
+        <div class="dnd-subtabs" role="tablist" aria-label="D&D sections"><button id="librarySubTab" role="tab" aria-selected="true" aria-controls="librarySubPanel">Library</button><button id="enrichmentSubTab" role="tab" aria-selected="false" aria-controls="enrichmentSubPanel" tabindex="-1">Enrichment</button></div>
+        <div id="librarySubPanel" role="tabpanel" aria-labelledby="librarySubTab">
+        <div id="bookListView">
+          <form id="bookFilters" class="book-filters" role="search" aria-label="Find D&D books">
+            <label class="book-search">Search the library<input id="bookSearch" type="search" maxlength="512" placeholder="A title, a creature, a forgotten realm…" autocomplete="off" /></label>
+            <label>Search in<select id="bookSearchIn"><option value="name">Name only</option><option value="all">Name &amp; description</option></select></label>
+            <label>Storefront<select id="bookSource"><option value="">Both storefronts</option><option value="dtrpg">DriveThruRPG</option><option value="dmsguild">DM’s Guild</option></select></label>
+            <label>Edition<select id="bookEdition"><option value="">All editions</option><option value="dnd-0">D&amp;D 0</option><option value="dnd-bx">B/X · Basic family</option><option value="adnd-1">AD&amp;D 1</option><option value="adnd-2">AD&amp;D 2</option><option value="dnd-3">D&amp;D 3</option><option value="dnd-35">D&amp;D 3.5</option><option value="dnd-4">D&amp;D 4</option><option value="dnd-5">D&amp;D 5</option><option value="dnd-55">D&amp;D 5.5</option></select></label>
+            <label>Official status<select id="bookOfficial"><option value="all">All products</option><option value="official">Official only</option><option value="unofficial">Non-official only</option></select></label>
+            <label>Sort by<select id="bookSort"><option value="name-asc">Name · A–Z</option><option value="name-desc">Name · Z–A</option><option value="date-desc">Release date · newest</option><option value="date-asc">Release date · oldest</option></select></label>
+            <button type="submit" class="primary">Search</button><button type="button" id="bookReset">Reset</button>
+          </form>
+          <div class="library-toolbar"><p id="bookStatus" role="status" aria-live="polite">Open the library to browse saved D&amp;D books.</p><button id="bookRefresh">Refresh books</button></div>
+          <p class="book-hint">Search matches all entered words. Unknown official status appears under All products. Missing dates sort last.</p>
+          <ol id="bookList" class="book-list" aria-label="D&D books"></ol>
+          <div id="bookEmpty" class="library-empty" hidden><span aria-hidden="true">✧</span><h2>No tomes found</h2><p>Try another search or edition. If your catalog has not been indexed, build the D&amp;D browsing index in Data maintenance.</p></div>
+          <nav class="book-pagination" aria-label="Book pages"><button id="booksPrevious" disabled>Previous</button><span id="bookPage">Page 1</span><button id="booksNext" disabled>Next</button></nav>
+        </div>
+        <div id="bookDetailView" hidden><button id="bookBack" class="book-back">← Back to the library</button><p id="bookDetailStatus" role="status"></p><article id="bookDetail" class="book-detail"></article></div>
+        </div>
+        <div id="enrichmentSubPanel" role="tabpanel" aria-labelledby="enrichmentSubTab" tabindex="0" hidden>
+          <section class="enrich-intro"><span class="eyebrow">The lorekeeper’s desk</span><h2>Adventure enrichment</h2><p>Discover player counts, character levels, settings, locations and in-world dates for adventures across both storefronts.</p><p class="book-hint">GPT-6.1 Terra reads each book’s full saved JSON and cover. Up to 16 books run in parallel. Fast mode is requested; OpenAI may use standard processing when unavailable. Web search is used only for missing information. Existing values are kept.</p><p class="book-hint">Agnostic means the source explicitly supports any campaign setting; it can accompany named settings. Unknown is a completed lookup with no supported answer. In-world dates retain their fictional calendar and may be approximate or relative.</p><p class="book-hint">Enrich sends eligible books’ JSON and covers to OpenAI using your connected account’s usage allowance.</p><div class="actions"><button id="enrichStart" class="primary">Enrich</button><button id="enrichStop" hidden>Stop</button><button id="enrichRefresh">Refresh dashboard</button></div><p id="enrichGate" class="book-hint"></p></section>
+          <div class="enrich-metrics"><div><span>Eligible adventures</span><strong id="enrichEligible">—</strong></div><div><span>Player counts enriched</span><strong id="enrichPlayers">—</strong></div><div><span>Character levels enriched</span><strong id="enrichLevels">—</strong></div><div><span>Settings enriched</span><strong id="enrichSettings">—</strong></div><div><span>Locations enriched</span><strong id="enrichLocations">—</strong></div><div><span>In-world dates enriched</span><strong id="enrichDates">—</strong></div><div><span>Books awaiting enrichment</span><strong id="enrichPending">—</strong></div></div>
+          <section class="enrich-progress"><h3 id="enrichState">Ready</h3><p id="enrichCurrent"></p><ul id="enrichActive" class="enrich-active" aria-label="Books in progress"></ul><p id="enrichMessage" role="status" aria-live="polite"></p><progress id="enrichProgress" max="1" value="0" aria-label="Enrichment progress"></progress><p id="enrichRunCounts" class="book-hint"></p><p id="enrichCoverNote" class="book-hint"></p></section>
+          <div class="library-toolbar"><h3>Saved results &amp; issues</h3><span id="enrichPage">Page 1</span></div><p id="enrichError" role="status"></p><ol id="enrichResults" class="enrich-results"></ol><div class="book-pagination"><button id="enrichPrevious">Previous</button><button id="enrichNext">Next</button></div>
+        </div>
+      </div>
     </main>
     <footer class="status-bar"><span id="storageStatus">Opening local storage</span><span id="footerSource">DriveThruRPG</span><span class="status-bar-end">Saved results stay on this computer</span></footer>
   </div>
   <div id="loadingOverlay" class="loading-overlay"><div id="loadingDialog" class="loading-dialog" role="dialog" aria-modal="true" aria-labelledby="loadingTitle" aria-describedby="loadingMessage loadingHint" tabindex="-1"><div class="loading-spinner" aria-hidden="true"></div><h2 id="loadingTitle">Opening your catalog</h2><p id="loadingMessage" role="status" aria-live="polite">Preparing local storage…</p><p id="loadingHint" class="muted">Large catalogs can take a while. Please keep this window open.</p><button id="abortLoading">Abort and close</button></div></div>
-  <script type="module" src="/app.js"></script>
+  <script src="/bootstrap.js"></script>
 </body>
 </html>

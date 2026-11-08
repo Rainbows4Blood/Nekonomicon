@@ -15,3 +15,7 @@ credentials*
 cookies*
 !internal/auth/cookies.go
 !internal/auth/cookies_test.go
+
+openai.enc
+openai.lock
+.openai-*

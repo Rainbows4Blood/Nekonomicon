@@ -147,7 +147,7 @@ type MetadataJob struct {
 
 func (s *Store) MetadataSummary(ctx context.Context, source storefront.Source) (MetadataSummary, error) {
 	var v MetadataSummary
-	err := s.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status IN ('complete','warnings')),0),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status='warnings'),0),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status='failed'),0) FROM products p LEFT JOIN metadata_state m USING(source,product_id) WHERE p.source=?`, metadata.Version, metadata.Version, metadata.Version, source).Scan(&v.Total, &v.Current, &v.Warnings, &v.Failed)
+	err := s.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status IN ('complete','warnings')),0),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status='warnings'),0),coalesce(sum(m.version=? AND m.response_fetched_at=p.fetched_at AND m.status='failed'),0) FROM products p INDEXED BY products_freshness LEFT JOIN metadata_state m USING(source,product_id) WHERE (?='' OR p.source=?)`, metadata.Version, metadata.Version, metadata.Version, source, source).Scan(&v.Total, &v.Current, &v.Warnings, &v.Failed)
 	v.Pending = v.Total - v.Current
 	return v, err
 }
@@ -161,7 +161,7 @@ func (s *Store) MetadataJob(ctx context.Context, source storefront.Source) (*Met
 }
 func (s *Store) MaintenanceSource(ctx context.Context) (storefront.Source, error) {
 	var source storefront.Source
-	err := s.db.QueryRowContext(ctx, `SELECT source FROM metadata_jobs WHERE state IN ('running','paused','blocked') UNION ALL SELECT source FROM group_jobs WHERE state IN ('running','paused','blocked') LIMIT 1`).Scan(&source)
+	err := s.db.QueryRowContext(ctx, `SELECT source FROM metadata_jobs WHERE state IN ('running','paused','blocked') UNION ALL SELECT source FROM group_jobs WHERE state IN ('running','paused','blocked') UNION ALL SELECT source FROM catalog_jobs WHERE state IN ('running','paused','blocked') LIMIT 1`).Scan(&source)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -187,7 +187,7 @@ func (s *Store) BeginMetadata(ctx context.Context, source storefront.Source) (Me
 		return j, errors.New("Finish the other storefront's maintenance first")
 	}
 	var otherTask int
-	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM group_jobs WHERE state IN ('running','paused','blocked')").Scan(&otherTask); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM group_jobs WHERE state IN ('running','paused','blocked'))+(SELECT count(*) FROM catalog_jobs WHERE state IN ('running','paused','blocked'))").Scan(&otherTask); err != nil {
 		return j, err
 	}
 	if otherTask > 0 {
@@ -224,7 +224,7 @@ type MetadataRow struct {
 }
 
 func (s *Store) MetadataPage(ctx context.Context, source storefront.Source, after int64) ([]MetadataRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.product_id,p.fetched_at,p.response_json FROM products p LEFT JOIN metadata_state m USING(source,product_id) WHERE p.source=? AND p.product_id>? AND (m.version IS NULL OR m.version<>? OR m.response_fetched_at<>p.fetched_at OR m.status='failed') ORDER BY p.product_id LIMIT 64`, source, after, metadata.Version)
+	rows, err := s.db.QueryContext(ctx, `SELECT p.product_id,p.fetched_at,p.response_json FROM products p INDEXED BY products_freshness LEFT JOIN metadata_state m USING(source,product_id) WHERE p.source=? AND p.product_id>? AND (m.version IS NULL OR m.version<>? OR m.response_fetched_at<>p.fetched_at OR m.status='failed') ORDER BY p.product_id LIMIT 64`, source, after, metadata.Version)
 	if err != nil {
 		return nil, err
 	}
@@ -303,14 +303,15 @@ func (s *Store) CommitMetadata(ctx context.Context, j MetadataJob, rows []Metada
 }
 
 type MetadataIssue struct {
-	ID       int64    `json:"id"`
-	Status   string   `json:"status"`
-	Message  string   `json:"message"`
-	Warnings []string `json:"warnings"`
+	Source   storefront.Source `json:"source"`
+	ID       int64             `json:"id"`
+	Status   string            `json:"status"`
+	Message  string            `json:"message"`
+	Warnings []string          `json:"warnings"`
 }
 
 func (s *Store) MetadataIssues(ctx context.Context, source storefront.Source, offset int) ([]MetadataIssue, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.product_id,m.status,m.message,m.warnings_json FROM metadata_state m JOIN products p USING(source,product_id) WHERE m.source=? AND m.version=? AND m.response_fetched_at=p.fetched_at AND m.status IN ('warnings','failed') ORDER BY m.product_id LIMIT 50 OFFSET ?`, source, metadata.Version, max(0, offset))
+	rows, err := s.db.QueryContext(ctx, `SELECT m.source,m.product_id,m.status,m.message,m.warnings_json FROM metadata_state m JOIN products p USING(source,product_id) WHERE (?='' OR m.source=?) AND m.version=? AND m.response_fetched_at=p.fetched_at AND m.status IN ('warnings','failed') ORDER BY m.source,m.product_id LIMIT 50 OFFSET ?`, source, source, metadata.Version, max(0, offset))
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +320,7 @@ func (s *Store) MetadataIssues(ctx context.Context, source storefront.Source, of
 	for rows.Next() {
 		var r MetadataIssue
 		var raw string
-		if err = rows.Scan(&r.ID, &r.Status, &r.Message, &raw); err != nil {
+		if err = rows.Scan(&r.Source, &r.ID, &r.Status, &r.Message, &raw); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(raw), &r.Warnings); err != nil {

@@ -1,0 +1,21 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
+import {parseHTML} from "linkedom";
+import {openAIUI} from "./openai.js";
+test("OpenAI account selection, cancellation and safe rendering",async()=>{
+  const {document}=parseHTML(await readFile(new URL("index.html",import.meta.url),"utf8"));globalThis.document=document;
+  const $=id=>document.getElementById(id);let called;
+  Object.defineProperty($("openAIAccount"),"value",{get(){return this.querySelector("option[selected]")?.value || "";},set(value){for(const o of this.children)o.removeAttribute("selected");for(const o of this.children)if(o.value===value)o.setAttribute("selected","");}});
+  const api={SignInOpenAI:async id=>{called=id;},CancelOpenAISignIn:async()=>{called="cancel";},SignOutOpenAI:async()=>{called="out";}};
+  const ui=openAIUI({api,invoke:fn=>fn()});
+  const state={openAI:{accounts:[{id:"one",label:"<img src=x>"}],active:"one",connected:true,planEnabled:true,message:"Connected"}};
+  ui.render(state,false);assert.equal($("openAIAccount").value,"one");assert.equal($("openAIAccount").querySelector("img"),null);assert.equal($("openAISignOut").hidden,false);
+  $("openAIAccount").value="";$("openAIAccount").onchange();await $("openAISignIn").onclick();assert.equal(called,"");
+  ui.render({openAI:{...state.openAI,state:"signing_in",running:true}},false);assert.equal($("openAICancel").hidden,false);assert.equal($("openAISignIn").disabled,true);
+  await $("openAICancel").onclick();assert.equal(called,"cancel");
+  ui.render({openAI:{...state.openAI,active:"two",accounts:[...state.openAI.accounts,{id:"two",label:"Second account"}]}},false);
+  assert.equal($("openAIAccount").value,"two");
+  ui.render({openAI:{accounts:state.openAI.accounts,connected:false,message:"Signed out locally"}},false);assert.equal($("openAISignOut").hidden,true);
+  delete globalThis.document;
+});

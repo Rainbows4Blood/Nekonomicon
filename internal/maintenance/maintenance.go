@@ -9,13 +9,14 @@ import (
 
 	"github.com/Rainbows4Blood/Nekonomicon/internal/metadata"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/store"
-	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 )
 
 type Snapshot struct {
-	Action string              `json:"action"`
-	Groups store.GroupsSummary `json:"groups"`
+	Action  string               `json:"action"`
+	Groups  store.GroupsSummary  `json:"groups"`
+	Catalog store.CatalogSummary `json:"catalog"`
 
+	CountsStale       bool                  `json:"countsStale"`
 	State             string                `json:"state"`
 	Message           string                `json:"message"`
 	Running           bool                  `json:"running"`
@@ -28,17 +29,27 @@ type Snapshot struct {
 	Job               *store.MetadataJob    `json:"job"`
 }
 type Manager struct {
-	mu     sync.Mutex
-	s      *store.Store
-	source storefront.Source
-	v      Snapshot
-	cancel context.CancelFunc
-	done   chan struct{}
+	mu          sync.Mutex
+	s           *store.Store
+	v           Snapshot
+	cancel      context.CancelFunc
+	done        chan struct{}
+	readSummary func(context.Context, string) (store.MetadataSummary, error)
 }
 
-func New(ctx context.Context, s *store.Store, source storefront.Source) (*Manager, error) {
+func New(ctx context.Context, s *store.Store) (*Manager, error) {
 	version := s.Version()
-	m := &Manager{s: s, source: source, v: Snapshot{State: "ready", Message: "Apply missing transformations to saved responses. No sign-in is needed.", SchemaVersion: version, ExtractionVersion: metadata.Version, NeedsSchema: version != store.SchemaVersion, NewerSchema: version > store.SchemaVersion}}
+	m := &Manager{s: s, v: Snapshot{State: "ready", Message: "Apply missing transformations to saved responses. No sign-in is needed.", SchemaVersion: version, ExtractionVersion: metadata.Version, NeedsSchema: version != store.SchemaVersion, NewerSchema: version > store.SchemaVersion}}
+	m.readSummary = func(ctx context.Context, action string) (store.MetadataSummary, error) {
+		switch action {
+		case "groups":
+			return s.GroupsSummary(ctx, "")
+		case "catalog":
+			return s.CatalogSummary(ctx, "")
+		default:
+			return s.MetadataSummary(ctx, "")
+		}
+	}
 	if m.v.NeedsSchema {
 		m.v.State = "schema_required"
 		m.v.Message = "Database needs maintenance before crawling."
@@ -47,34 +58,37 @@ func New(ctx context.Context, s *store.Store, source storefront.Source) (*Manage
 		}
 		return m, nil
 	}
-	v, err := s.MetadataSummary(ctx, source)
+	v, err := s.MetadataSummary(ctx, "")
 	if err != nil {
 		return nil, err
 	}
 	m.v.Summary = v
-	if m.v.Groups, err = s.GroupsSummary(ctx, source); err != nil {
+	if m.v.Groups, err = s.GroupsSummary(ctx, ""); err != nil {
 		return nil, err
 	}
-	j, err := s.MetadataJob(ctx, source)
-	if err != nil {
+	if m.v.Catalog, err = s.CatalogSummary(ctx, ""); err != nil {
 		return nil, err
 	}
-	m.v.Action = "metadata"
-	gj, err := s.GroupsJob(ctx, source)
-	if err != nil {
-		return nil, err
-	}
-	if gj != nil && (j == nil || gj.State == "running" || gj.State == "paused" || gj.State == "blocked") {
-		j = gj
-		m.v.Action = "groups"
-	}
-	if j != nil {
-		m.v.Job = j
-		m.v.State = j.State
-		if j.State == "running" || j.State == "paused" || j.State == "blocked" {
-			m.v.Held = true
-			m.v.State = "paused"
-			m.v.Message = "Maintenance can resume from its last committed batch."
+	for _, action := range []string{"metadata", "groups", "catalog"} {
+		jobs, err := s.MaintenanceJobs(ctx, action)
+		if err != nil {
+			return nil, err
+		}
+		var held []store.MetadataJob
+		for _, j := range jobs {
+			if j.State == "running" || j.State == "paused" || j.State == "blocked" {
+				held = append(held, j)
+			}
+		}
+		if len(held) > 0 {
+			m.v.Action, m.v.Held, m.v.State = action, true, "paused"
+			m.v.Job = combinedJob(held)
+			m.v.Message = "Maintenance can resume across the whole database from its last committed batch."
+			break
+		}
+		if len(jobs) > 0 && m.v.Job == nil {
+			m.v.Action, m.v.Job = action, combinedJob(jobs)
+			m.v.State = m.v.Job.State
 		}
 	}
 	return m, nil
@@ -90,13 +104,13 @@ func (m *Manager) Snapshot() Snapshot {
 	return v
 }
 func (m *Manager) change(f func(*Snapshot)) { m.mu.Lock(); defer m.mu.Unlock(); f(&m.v) }
-func (m *Manager) Start(action string, afterSchema func() (storefront.Source, error)) error {
+func (m *Manager) Start(action string, afterSchema func() error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.v.Running {
 		return errors.New("Maintenance is already running")
 	}
-	if action != "schema" && action != "metadata" && action != "groups" {
+	if action != "schema" && action != "metadata" && action != "groups" && action != "catalog" {
 		return errors.New("Unknown maintenance action")
 	}
 	if action != "schema" && m.v.NeedsSchema {
@@ -118,9 +132,12 @@ func (m *Manager) Start(action string, afterSchema func() (storefront.Source, er
 	go m.run(ctx, action, afterSchema)
 	return nil
 }
-func (m *Manager) run(ctx context.Context, action string, afterSchema func() (storefront.Source, error)) {
+func (m *Manager) run(ctx context.Context, action string, afterSchema func() error) {
 	var err error
 	started := false
+	previouslyHeld := m.Snapshot().Held
+	var restoredAction string
+	var restoredJob *store.MetadataJob
 	defer func() {
 		state, msg := "completed", "Maintenance complete. Saved responses are unchanged."
 		if err != nil {
@@ -141,27 +158,23 @@ func (m *Manager) run(ctx context.Context, action string, afterSchema func() (st
 			cancel()
 		}
 		if m.s.Version() == store.SchemaVersion {
-			c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			if summary, e := m.s.MetadataSummary(c, m.source); e == nil {
-				m.change(func(v *Snapshot) { v.Summary = summary })
-			} else if err == nil {
-				state, msg = "blocked", "Could not refresh maintenance counts. Reopen the catalog to check the saved results."
-			}
-			if summary, e := m.s.GroupsSummary(c, m.source); e == nil {
-				m.change(func(v *Snapshot) { v.Groups = summary })
-			} else if err == nil {
-				state, msg = "blocked", "Could not refresh group counts. Reopen the catalog to check the saved results."
-			}
-			cancel()
+			// Counts are a read-only follow-up, never a reason to undo a saved
+			// completion or hold the catalog for a needless second indexing pass.
+			_ = m.refreshCounts(context.Background())
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		m.v.State, m.v.Message, m.v.Running = state, msg, false
 		m.v.SchemaVersion = m.s.Version()
 		m.v.NeedsSchema = m.v.SchemaVersion != store.SchemaVersion
-		m.v.Held = started && (state == "paused" || state == "blocked")
+		m.v.Held = (started || previouslyHeld) && (state == "paused" || state == "blocked")
 		if m.v.Job != nil {
 			m.v.Job.State = state
+		}
+		if restoredJob != nil {
+			m.v.Action, m.v.Job, m.v.Held = restoredAction, restoredJob, true
+			m.v.State = "paused"
+			m.v.Message = "Database updated. Resume or end the unfinished maintenance task."
 		}
 		m.cancel()
 		close(m.done)
@@ -169,29 +182,40 @@ func (m *Manager) run(ctx context.Context, action string, afterSchema func() (st
 	if action == "schema" {
 		err = m.s.Upgrade(ctx, func(msg string) { m.change(func(v *Snapshot) { v.State = "upgrading"; v.Message = msg }) })
 		if err == nil && afterSchema != nil {
-			var source storefront.Source
-			source, err = afterSchema()
-			if err == nil {
-				m.mu.Lock()
-				m.source = source
-				m.mu.Unlock()
+			err = afterSchema()
+		}
+		if err == nil {
+			// A schema upgrade must not hide a paused task from the older schema.
+			readCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			for _, task := range []string{"metadata", "groups", "catalog"} {
+				var jobs []store.MetadataJob
+				jobs, err = m.s.MaintenanceJobs(readCtx, task)
+				if err != nil {
+					break
+				}
+				var held []store.MetadataJob
+				for _, j := range jobs {
+					if j.State == "running" || j.State == "paused" || j.State == "blocked" {
+						held = append(held, j)
+					}
+				}
+				if len(held) > 0 {
+					restoredAction, restoredJob = task, combinedJob(held)
+					break
+				}
 			}
 		}
 		return
 	}
-	var job store.MetadataJob
-	if action == "groups" {
-		job, err = m.s.BeginGroups(ctx, m.source)
-	} else {
-		job, err = m.s.BeginMetadata(ctx, m.source)
-	}
+	jobs, beginErr := m.s.BeginDatabaseMaintenance(ctx, action)
+	err = beginErr
 	if err != nil {
 		return
 	}
 	started = true
 	m.change(func(v *Snapshot) {
-		j := job
-		v.Job = &j
+		v.Job = combinedJob(jobs)
 		v.Held = true
 		v.State = "extracting"
 		v.Message = "Extracting metadata from saved responses…"
@@ -199,36 +223,50 @@ func (m *Manager) run(ctx context.Context, action string, afterSchema func() (st
 			v.State = "grouping"
 			v.Message = "Building D&D edition groups from saved responses…"
 		}
+		if action == "catalog" {
+			v.State = "indexing"
+			v.Message = "Indexing names, descriptions, editions and release dates…"
+		}
 	})
-	for {
-		if err = ctx.Err(); err != nil {
-			return
+	for i, job := range jobs {
+		for {
+			if err = ctx.Err(); err != nil {
+				return
+			}
+			var rows []store.MetadataRow
+			if action == "groups" {
+				rows, err = m.s.GroupsPage(ctx, job.Source, job.LastID)
+			} else if action == "catalog" {
+				rows, err = m.s.CatalogPage(ctx, job.Source, job.LastID)
+			} else {
+				rows, err = m.s.MetadataPage(ctx, job.Source, job.LastID)
+			}
+			if err != nil {
+				return
+			}
+			if len(rows) == 0 {
+				break
+			}
+			if err = ctx.Err(); err != nil {
+				return
+			}
+			// Pause lets the current short transaction settle. No buffered result is
+			// counted until its rows, outcome and cursor have committed together.
+			commitCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if action == "groups" {
+				job, err = m.s.CommitGroups(commitCtx, job, rows)
+			} else if action == "catalog" {
+				job, err = m.s.CommitCatalog(commitCtx, job, rows)
+			} else {
+				job, err = m.s.CommitMetadata(commitCtx, job, rows)
+			}
+			cancel()
+			if err != nil {
+				return
+			}
+			jobs[i] = job
+			m.change(func(v *Snapshot) { v.Job = combinedJob(jobs) })
 		}
-		var rows []store.MetadataRow
-		if action == "groups" {
-			rows, err = m.s.GroupsPage(ctx, m.source, job.LastID)
-		} else {
-			rows, err = m.s.MetadataPage(ctx, m.source, job.LastID)
-		}
-		if err != nil || len(rows) == 0 {
-			return
-		}
-		if err = ctx.Err(); err != nil {
-			return
-		}
-		// Pause lets the current short transaction settle. No buffered result is
-		// counted until its rows, outcome and cursor have committed together.
-		commitCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if action == "groups" {
-			job, err = m.s.CommitGroups(commitCtx, job, rows)
-		} else {
-			job, err = m.s.CommitMetadata(commitCtx, job, rows)
-		}
-		cancel()
-		if err != nil {
-			return
-		}
-		m.change(func(v *Snapshot) { j := job; v.Job = &j })
 	}
 }
 func (m *Manager) Pause() error {
@@ -290,21 +328,51 @@ func (m *Manager) Refresh(ctx context.Context) error {
 		return nil
 	}
 	m.mu.Unlock()
-	v, err := m.s.MetadataSummary(ctx, m.source)
-	if err != nil {
-		return err
+	return m.refreshCounts(ctx)
+}
+
+func (m *Manager) refreshCounts(ctx context.Context) error {
+	var failure error
+	for _, action := range []string{"metadata", "groups", "catalog"} {
+		// Each count has its own budget; a slow first query cannot exhaust the
+		// remaining queries' time. The caller can still cancel the whole refresh.
+		readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		v, err := m.readSummary(readCtx, action)
+		cancel()
+		if err != nil {
+			failure = err
+			continue
+		}
+		m.change(func(s *Snapshot) {
+			switch action {
+			case "groups":
+				s.Groups = v
+			case "catalog":
+				s.Catalog = v
+			default:
+				s.Summary = v
+			}
+		})
 	}
-	g, err := m.s.GroupsSummary(ctx, m.source)
-	if err != nil {
-		return err
+	m.change(func(s *Snapshot) { s.CountsStale = failure != nil })
+	if failure != nil {
+		return errors.New("Some counts could not be refreshed. Saved work is safe; use Refresh counts to retry")
 	}
-	m.change(func(s *Snapshot) { s.Summary = v; s.Groups = g })
 	return nil
 }
 
 func (m *Manager) setState(ctx context.Context, action, state string) error {
-	if action == "groups" {
-		return m.s.SetGroupsState(ctx, m.source, state)
+	return m.s.SetDatabaseMaintenanceState(ctx, action, state)
+}
+
+func combinedJob(jobs []store.MetadataJob) *store.MetadataJob {
+	v := &store.MetadataJob{}
+	for _, j := range jobs {
+		v.Version, v.State = j.Version, j.State
+		v.Total += j.Total
+		v.Processed += j.Processed
+		v.Warned += j.Warned
+		v.Failed += j.Failed
 	}
-	return m.s.SetMetadataState(ctx, m.source, state)
+	return v
 }

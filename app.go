@@ -15,12 +15,16 @@ import (
 	"github.com/Rainbows4Blood/Nekonomicon/internal/auth"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/dtrpg"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/engine"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/enrichment"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/maintenance"
+	"github.com/Rainbows4Blood/Nekonomicon/internal/openaiauth"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/store"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
 )
 
 type App struct {
+	enrichment                                    *enrichment.Runner
+	openAI                                        *openaiauth.Manager
 	source                                        storefront.Source
 	mu                                            sync.Mutex
 	ctx                                           context.Context
@@ -42,6 +46,8 @@ type App struct {
 	quit                                          func(context.Context)
 }
 type View struct {
+	Enrichment       enrichment.Snapshot  `json:"enrichment"`
+	OpenAI           openaiauth.View      `json:"openAI"`
 	Maintenance      maintenance.Snapshot `json:"maintenance"`
 	StorageAvailable bool                 `json:"storageAvailable"`
 	LoadingError     string               `json:"loadingError"`
@@ -136,18 +142,10 @@ func (a *App) SelectSource(value string) error {
 			return err
 		}
 	}
-	var m *maintenance.Manager
-	if a.store != nil {
-		m, err = maintenance.New(context.Background(), a.store, source)
-		if err != nil {
-			return err
-		}
-	}
 	if err = savePreferences(a.folder, source); err != nil {
 		return errors.New("Could not save the storefront preference")
 	}
 	a.source, a.network, a.vault, a.authNote, a.engine = source, n, vault, note, e
-	a.maintenance = m
 	return nil
 }
 func defaultDataDir() string {
@@ -166,6 +164,12 @@ func (a *App) Snapshot() View {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	v := View{LoadingError: a.storageError, Loading: a.loading, Migrating: a.migrating, Closing: a.closing, LoadingMessage: a.loadingMessage, Source: a.source, SourceName: a.source.Name(), WebsiteHost: "www." + a.source.Domain(), APIHost: "api." + a.source.Domain(), ProbeID: a.source.ProbeID(), DataFolder: a.folder, StorageReady: a.engine != nil && !a.loading && !a.closing, Busy: a.busy || a.closing, AuthNote: a.authNote}
+	if a.enrichment != nil {
+		v.Enrichment = a.enrichment.Snapshot()
+	}
+	if a.openAI != nil {
+		v.OpenAI = a.openAI.Snapshot()
+	}
 	v.StorageAvailable = a.store != nil && !a.loading && !a.closing
 	if a.maintenance != nil {
 		v.Maintenance = a.maintenance.Snapshot()

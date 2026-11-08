@@ -16,7 +16,7 @@ export const labels = {
   blocked_storage: "Local storage needs attention",
 };
 export function controls(s) {
-  const maintenanceHeld = s.maintenance?.running || s.maintenance?.held;
+  const maintenanceHeld = s.maintenance?.running || s.maintenance?.held || s.enrichment?.running;
   const held = Boolean(s.run),
     locked = held || s.running || Boolean(maintenanceHeld),
     busy = s.busy || s.state === "pausing" || maintenanceHeld;

@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Rainbows4Blood/Nekonomicon/internal/catalog"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/groups"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/metadata"
 	"github.com/Rainbows4Blood/Nekonomicon/internal/storefront"
@@ -161,7 +162,7 @@ func InspectContext(ctx context.Context, dir string, progress func(string)) (*St
 	return s, nil
 }
 
-const SchemaVersion = 4
+const SchemaVersion = 9
 
 func (s *Store) Version() int { return int(s.version.Load()) }
 func (s *Store) Upgrade(ctx context.Context, progress func(string)) error {
@@ -272,6 +273,94 @@ func migrate(ctx context.Context, db *sql.DB, version int, progress func(string)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if version < 5 {
+		report("Preparing D&D browsing and search indexes…")
+		if _, err = tx.ExecContext(ctx, catalogSchema()); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=5"); err != nil {
+			return err
+		}
+	}
+	if version < 6 {
+		report("Indexing storefront filters and maintenance counts…")
+		if _, err = tx.ExecContext(ctx, storefrontIndexSchema()); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=6"); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if version < 7 {
+		report("Preparing adventure enrichment storage…")
+		var hasAdventure int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('dnd_books') WHERE name='is_adventure'`).Scan(&hasAdventure); err != nil {
+			return err
+		}
+		if hasAdventure == 0 {
+			if _, err = tx.ExecContext(ctx, `ALTER TABLE dnd_books ADD COLUMN is_adventure INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, enrichmentSchema()); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=7"); err != nil {
+			return err
+		}
+	}
+	if version < 8 {
+		report("Recording completed enrichment independently of known values…")
+		for _, column := range []string{"players", "levels"} {
+			var exists int
+			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('enrichment_results') WHERE name=?`, column+"_done").Scan(&exists); err != nil {
+				return err
+			}
+			if exists == 0 {
+				if _, err = tx.ExecContext(ctx, `ALTER TABLE enrichment_results ADD COLUMN `+column+`_done INTEGER NOT NULL DEFAULT 0`); err != nil {
+					return err
+				}
+				// Legacy unknown results cannot distinguish a finished web pass from
+				// an interrupted storefront checkpoint. Preserve known completions;
+				// allow one follow-up for ambiguous legacy results.
+				if _, err = tx.ExecContext(ctx, `UPDATE enrichment_results SET `+column+`_done=`+column+`_complete`); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=8"); err != nil {
+			return err
+		}
+	}
+	if version < 9 {
+		report("Adding setting, location and in-world date enrichments…")
+		for _, column := range []string{"settings", "locations", "dates"} {
+			for _, field := range []struct{ name, definition string }{{"json", "TEXT NOT NULL DEFAULT '{}'"}, {"done", "INTEGER NOT NULL DEFAULT 0"}, {"complete", "INTEGER NOT NULL DEFAULT 0"}} {
+				var exists int
+				name := column + "_" + field.name
+				if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('enrichment_results') WHERE name=?`, name).Scan(&exists); err != nil {
+					return err
+				}
+				if exists == 0 {
+					if _, err = tx.ExecContext(ctx, `ALTER TABLE enrichment_results ADD COLUMN `+name+` `+field.definition); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		// Preserve both old completion markers, including completed unknowns.
+		// Only the three newly introduced enrichments become pending.
+		if _, err = tx.ExecContext(ctx, `UPDATE enrichment_results SET status='partial' WHERE status='complete' AND (settings_done=0 OR locations_done=0 OR dates_done=0)`); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "PRAGMA user_version=9"); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 func (s *Store) Close() error {
@@ -293,7 +382,7 @@ func (s *Store) CreateRun(r Run) error {
 		return errors.New("Database needs maintenance before crawling")
 	}
 	var held int
-	if err := s.db.QueryRow(`SELECT (SELECT count(*) FROM metadata_jobs WHERE state IN ('running','paused','blocked'))+(SELECT count(*) FROM group_jobs WHERE state IN ('running','paused','blocked'))`).Scan(&held); err != nil {
+	if err := s.db.QueryRow(`SELECT (SELECT count(*) FROM metadata_jobs WHERE state IN ('running','paused','blocked'))+(SELECT count(*) FROM group_jobs WHERE state IN ('running','paused','blocked'))+(SELECT count(*) FROM catalog_jobs WHERE state IN ('running','paused','blocked'))`).Scan(&held); err != nil {
 		return err
 	}
 	if held > 0 {
@@ -421,6 +510,11 @@ func (s *Store) Commit(ctx context.Context, runID string, batch []Result) (Commi
 		return Commit{}, e
 	}
 	defer gw.close()
+	cw, e := prepareCatalog(ctx, tx)
+	if e != nil {
+		return Commit{}, e
+	}
+	defer cw.close()
 	var source storefront.Source
 	if e = tx.QueryRowContext(ctx, `SELECT source FROM runs WHERE id=?`, runID).Scan(&source); e != nil {
 		return v, e
@@ -486,6 +580,9 @@ func (s *Store) Commit(ctx context.Context, runID string, batch []Result) (Commi
 				e = mw.write(ctx, source, r.ID, at, projection)
 				if e == nil {
 					e = gw.write(ctx, source, r.ID, at, groups.Derive(source, projection))
+					if e == nil {
+						e = cw.write(ctx, source, r.ID, at, catalog.Derive(source, r.ID, projection))
+					}
 				}
 			}
 			if projection.Failure != "" {
